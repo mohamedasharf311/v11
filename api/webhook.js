@@ -8,7 +8,8 @@ const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
 
 // --- إعدادات Gemini API ---
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent";
+// ✅ استخدام gemini-1.5-pro اللي بيدعم الصور
+const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent";
 
 // --- دالة تحميل الصورة وتحويلها لـ Base64 ---
 async function imageUrlToBase64(url) {
@@ -67,7 +68,6 @@ async function analyzeImageWithGemini(imageBase64, mimeType) {
             }
         );
         
-        // استخراج النص من الرد
         const result = response.data;
         if (result.candidates && result.candidates[0] && result.candidates[0].content) {
             return result.candidates[0].content.parts[0].text;
@@ -112,7 +112,8 @@ module.exports = async (req, res) => {
     if (method === 'GET' && url === '/api/webhook') {
         return res.status(200).json({ 
             status: 'active',
-            gemini_key: GEMINI_API_KEY ? 'present' : 'missing'
+            gemini_key: GEMINI_API_KEY ? 'present' : 'missing',
+            model: 'gemini-1.5-pro'
         });
     }
 
@@ -123,7 +124,7 @@ module.exports = async (req, res) => {
             <head><title>بوت تصحيح الأوراق</title></head>
             <body style="font-family: Arial; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
                 <h1>🤖 بوت تصحيح الأوراق</h1>
-                <p>🧠 Gemini HTTP API: ${GEMINI_API_KEY ? '✅ جاهز' : '❌ غير مهيأ'}</p>
+                <p>🧠 Gemini Pro Vision: ${GEMINI_API_KEY ? '✅ جاهز' : '❌ غير مهيأ'}</p>
                 <p>📱 WAPilot: ✅ متصل</p>
                 <p style="color: #10b981;">🎉 جاهز لاستقبال الصور!</p>
             </body>
@@ -156,12 +157,11 @@ module.exports = async (req, res) => {
         console.log(`📱 From: ${chatId} | Image: ${isImage}`);
         
         if (isImage && mediaUrl && GEMINI_API_KEY) {
-            console.log('🖼️ Processing with Gemini HTTP API...');
+            console.log('🖼️ Processing with Gemini Pro Vision...');
             
-            await sendWAPilotMessage(chatId, "⏳ جاري تحليل الصورة باستخدام Gemini...");
+            await sendWAPilotMessage(chatId, "⏳ جاري تحليل الصورة باستخدام Gemini Pro Vision...");
             
             try {
-                // تحميل الصورة وتحويلها لـ Base64
                 const imageData = await imageUrlToBase64(mediaUrl);
                 
                 if (!imageData) {
@@ -169,15 +169,13 @@ module.exports = async (req, res) => {
                     return res.status(200).json({ ok: false });
                 }
                 
-                console.log('✅ Image converted, sending to Gemini...');
+                console.log('✅ Image converted, sending to Gemini Pro...');
                 
-                // تحليل الصورة
                 const analysis = await analyzeImageWithGemini(imageData.base64, imageData.mimeType);
                 
                 console.log('✅ Gemini response received');
                 
-                // إرسال الرد
-                await sendWAPilotMessage(chatId, `🤖 *تحليل Gemini:*\n\n${analysis}`);
+                await sendWAPilotMessage(chatId, `🤖 *تحليل Gemini Pro:*\n\n${analysis}`);
                 
             } catch (error) {
                 console.error('❌ Error:', error.message);
@@ -187,8 +185,7 @@ module.exports = async (req, res) => {
         } else if (isImage && !GEMINI_API_KEY) {
             await sendWAPilotMessage(chatId, "❌ GEMINI_API_KEY غير موجود في Vercel.");
         } else {
-            // رسالة نصية
-            await sendWAPilotMessage(chatId, "📸 *مرحباً بك في بوت تصحيح الأوراق!*\n\nمن فضلك أرسل صورة واضحة لورقة الإجابة.\n\nسأقوم بتحليلها مباشرة باستخدام Gemini Vision 🧠");
+            await sendWAPilotMessage(chatId, "📸 *مرحباً بك في بوت تصحيح الأوراق!*\n\nمن فضلك أرسل صورة واضحة لورقة الإجابة.");
         }
         
         return res.status(200).json({ ok: true });
