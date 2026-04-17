@@ -11,16 +11,20 @@ const WAPILOT_TOKEN = "yzWzEjmxZpbifuOx6lWafYT3Ng69gaFpJGAdTsVc6N";
 const BASE_URL = "https://api.wapilot.com/v1";
 
 // --- إعدادات Google (من Environment Variables) ---
-const GEMINI_API_KEY = process.env.Gemini_API_Key;
-const GOOGLE_VISION_API_KEY = process.env.GOOGLE_VISION_API_KEY;
+// بدعم الأسماء المختلفة للمتغيرات
+const GEMINI_API_KEY = process.env.Gemini_API_Key || process.env.GEMINI_API_KEY || '';
+const GOOGLE_VISION_API_KEY = process.env.GOOGLE_VISION_API_KEY || '';
 
 // --- تهيئة Gemini ---
 let genAI;
 let model;
 let geminiInitialized = false;
+let geminiError = '';
 
 if (GEMINI_API_KEY) {
     try {
+        console.log('🔑 Initializing Gemini with key length:', GEMINI_API_KEY.length);
+        
         if (GEMINI_API_KEY.startsWith('AQ.')) {
             console.log('✅ Using Vertex AI configuration');
             genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
@@ -35,12 +39,17 @@ if (GEMINI_API_KEY) {
         geminiInitialized = true;
     } catch (error) {
         console.error('❌ Error initializing Gemini:', error.message);
+        geminiError = error.message;
     }
+} else {
+    console.warn('⚠️ GEMINI_API_KEY not found in environment variables');
+    console.log('Available env vars:', Object.keys(process.env).filter(k => k.includes('GEMINI') || k.includes('KEY')));
 }
 
 // --- تهيئة Vision Client ---
 let visionClient;
 let visionInitialized = false;
+let visionError = '';
 
 if (GOOGLE_VISION_API_KEY) {
     try {
@@ -51,7 +60,10 @@ if (GOOGLE_VISION_API_KEY) {
         console.log('✅ Vision client initialized');
     } catch (error) {
         console.error('❌ Error initializing Vision:', error.message);
+        visionError = error.message;
     }
+} else {
+    console.warn('⚠️ GOOGLE_VISION_API_KEY not found');
 }
 
 // --- دالة إرسال رسالة عبر WAPilot ---
@@ -136,6 +148,10 @@ module.exports = async (req, res) => {
                                 <span class="status ${visionInitialized ? 'online' : 'offline'}">👁️ Vision: ${visionInitialized ? 'متصل' : 'غير متصل'}</span>
                                 <span class="status ${INSTANCE_ID ? 'online' : 'offline'}">📱 WAPilot: ${INSTANCE_ID ? 'متصل' : 'غير متصل'}</span>
                             </div>
+                            <p style="margin-top: 20px;">
+                                🔑 Gemini Key: ${GEMINI_API_KEY ? 'موجود ✓' : 'مفقود ✗'}<br>
+                                👁️ Vision Key: ${GOOGLE_VISION_API_KEY ? 'موجود ✓' : 'مفقود ✗'}
+                            </p>
                             <p style="margin-top: 20px;">⬆️ استخدم الرابط أعلاه في إعدادات WAPilot</p>
                         </div>
                     </body>
@@ -153,25 +169,26 @@ module.exports = async (req, res) => {
     // 2️⃣ نقطة API: فحص Gemini
     // =============================================
     if (method === 'GET' && url === '/api/check-gemini') {
-        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
         
         try {
             if (!GEMINI_API_KEY) {
                 return res.status(200).json({ 
                     status: 'error', 
-                    message: 'Gemini API Key غير موجود' 
+                    message: 'Gemini API Key غير موجود في Environment Variables',
+                    envKeys: Object.keys(process.env).filter(k => k.toLowerCase().includes('gemini'))
                 });
             }
             
             if (!model) {
                 return res.status(200).json({ 
                     status: 'error', 
-                    message: 'لم يتم تهيئة نموذج Gemini' 
+                    message: 'لم يتم تهيئة نموذج Gemini: ' + geminiError
                 });
             }
             
             // اختبار سريع
-            const testResult = await model.generateContent('قل "تمام" بالعربية');
+            const testResult = await model.generateContent('قل "تمام"');
             const response = testResult.response.text();
             
             res.status(200).json({ 
@@ -193,20 +210,20 @@ module.exports = async (req, res) => {
     // 3️⃣ نقطة API: فحص Google Vision
     // =============================================
     if (method === 'GET' && url === '/api/check-vision') {
-        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
         
         try {
             if (!GOOGLE_VISION_API_KEY) {
                 return res.status(200).json({ 
                     status: 'error', 
-                    message: 'Vision API Key غير موجود' 
+                    message: 'Vision API Key غير موجود'
                 });
             }
             
             if (!visionClient) {
                 return res.status(200).json({ 
                     status: 'error', 
-                    message: 'لم يتم تهيئة Vision Client' 
+                    message: 'لم يتم تهيئة Vision Client: ' + visionError
                 });
             }
             
@@ -229,7 +246,7 @@ module.exports = async (req, res) => {
     // 4️⃣ نقطة API: فحص WAPilot
     // =============================================
     if (method === 'GET' && url === '/api/check-wapilot') {
-        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
         
         try {
             if (INSTANCE_ID && WAPILOT_TOKEN) {
@@ -259,7 +276,7 @@ module.exports = async (req, res) => {
     // =============================================
     if (method === 'GET' && url === '/api/webhook') {
         res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.status(200).send(`✅ WAPilot OCR Bot is running!\n\nGemini: ${geminiInitialized ? 'Ready' : 'Not initialized'}\nVision: ${visionInitialized ? 'Ready' : 'Not initialized'}`);
+        res.status(200).send(`✅ WAPilot OCR Bot is running!\n\nGemini: ${geminiInitialized ? 'Ready' : 'Not initialized'}\nVision: ${visionInitialized ? 'Ready' : 'Not initialized'}\n\nGemini Key: ${GEMINI_API_KEY ? 'Present' : 'Missing'}\nVision Key: ${GOOGLE_VISION_API_KEY ? 'Present' : 'Missing'}`);
         return;
     }
 
