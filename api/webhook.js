@@ -1,42 +1,34 @@
 // api/webhook.js
 const axios = require('axios');
-const { VertexAI } = require('@google-cloud/vertexai');
+const Tesseract = require('tesseract.js');
 
 const INSTANCE_ID = "instance3532";
 const WAPILOT_TOKEN = "yzWzEjmxZpbifuOx6lWafYT3Ng69gaFpJGAdTsVc6N";
 const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
 
-// هتلاقي Project ID في صفحة Google Cloud Console الرئيسية
-const PROJECT_ID = 'gen-lang-client-0175051548'; // ده من الإيميل اللي ظهرلك
-const LOCATION = 'us-central1';
-
-let model = null;
-
-if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+async function extractTextFromImage(imageUrl) {
+    console.log('👁️ Starting Tesseract OCR...');
+    
     try {
-        const credentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS);
+        const result = await Tesseract.recognize(
+            imageUrl,
+            'ara+eng', // Arabic + English
+            {
+                logger: m => {
+                    if (m.status === 'recognizing text') {
+                        console.log(`📝 OCR: ${Math.round(m.progress * 100)}%`);
+                    }
+                }
+            }
+        );
         
-        const vertexAI = new VertexAI({
-            project: PROJECT_ID,
-            location: LOCATION,
-            googleAuthOptions: { credentials }
-        });
+        const text = result.data.text.trim();
+        console.log('✅ OCR completed:', text.length, 'chars');
+        return text || "عذراً، لم يتم التعرف على نص.";
         
-        model = vertexAI.preview.getGenerativeModel({ model: 'gemini-1.5-pro' });
-        console.log('✅ Vertex AI Ready');
     } catch (error) {
-        console.error('❌ Init Error:', error.message);
-    }
-}
-
-async function imageUrlToBase64(url) {
-    try {
-        const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 15000 });
-        const base64 = Buffer.from(response.data).toString('base64');
-        const mimeType = response.headers['content-type'] || 'image/jpeg';
-        return { base64, mimeType };
-    } catch (error) {
-        return null;
+        console.error('❌ OCR Error:', error.message);
+        return "خطأ في استخراج النص.";
     }
 }
 
@@ -58,7 +50,7 @@ module.exports = async (req, res) => {
     const method = req.method || 'GET';
     
     if (method === 'GET') {
-        return res.status(200).json({ status: 'active', vertex: !!model });
+        return res.status(200).json({ status: 'active' });
     }
 
     if (method === 'POST' && url === '/api/webhook') {
@@ -75,33 +67,18 @@ module.exports = async (req, res) => {
         if (!rawChatId) return res.status(200).json({ ok: false });
         let chatId = rawChatId.includes('@') ? rawChatId : `${rawChatId}@c.us`;
         
-        if (mediaUrl && model) {
-            await sendWAPilotMessage(chatId, "⏳ جاري تحليل الصورة...");
+        if (mediaUrl) {
+            await sendWAPilotMessage(chatId, "⏳ جاري استخراج النص من الصورة...");
             
-            const imageData = await imageUrlToBase64(mediaUrl);
-            if (!imageData) {
-                await sendWAPilotMessage(chatId, "❌ لم أتمكن من تحميل الصورة.");
-                return res.status(200).json({ ok: false });
+            const extractedText = await extractTextFromImage(mediaUrl);
+            
+            let response = `📝 *النص المستخرج:*\n${extractedText}`;
+            
+            if (extractedText.length > 5 && !extractedText.includes("عذراً")) {
+                response += `\n\n━━━━━━━━━━━━━━━\n\n✅ تم استخراج النص بنجاح!`;
             }
             
-            try {
-                const request = {
-                    contents: [{
-                        role: 'user',
-                        parts: [
-                            { text: 'استخرج النص العربي من الصورة، صحح الأخطاء، وأجب عن أي سؤال. أجب بالعربية.' },
-                            { inlineData: { mimeType: imageData.mimeType, data: imageData.base64 } }
-                        ]
-                    }]
-                };
-                
-                const result = await model.generateContent(request);
-                const response = result.response.candidates[0].content.parts[0].text;
-                
-                await sendWAPilotMessage(chatId, `🤖 *تحليل Vertex AI:*\n\n${response}`);
-            } catch (error) {
-                await sendWAPilotMessage(chatId, `❌ خطأ: ${error.message}`);
-            }
+            await sendWAPilotMessage(chatId, response);
         } else {
             await sendWAPilotMessage(chatId, "📸 أرسل صورة ورقة الإجابة");
         }
