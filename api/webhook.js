@@ -9,13 +9,36 @@ const WAPILOT_TOKEN = "yzWzEjmxZpbifuOx6lWafYT3Ng69gaFpJGAdTsVc6N";
 const BASE_URL = "https://api.wapilot.com/v1";
 
 // --- إعدادات Google (من Environment Variables) ---
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_API_KEY = process.env.Gemini_API_Key;
 const GOOGLE_VISION_API_KEY = process.env.GOOGLE_VISION_API_KEY;
 
-// --- تهيئة Gemini و Vision ---
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+// --- تهيئة Gemini (يدعم Vertex AI و Google AI Studio) ---
+let genAI;
+let model;
 
+if (GEMINI_API_KEY) {
+    try {
+        // لو المفتاح بيبدأ بـ "AQ." يبقى Vertex AI
+        if (GEMINI_API_KEY.startsWith('AQ.')) {
+            console.log('✅ Using Vertex AI configuration');
+            genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+            model = genAI.getGenerativeModel({ 
+                model: "gemini-1.5-flash"
+            }, {
+                apiVersion: "v1beta"
+            });
+        } else {
+            // Google AI Studio العادي
+            console.log('✅ Using Google AI Studio configuration');
+            genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+            model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        }
+    } catch (error) {
+        console.error('❌ Error initializing Gemini:', error.message);
+    }
+}
+
+// --- تهيئة Vision Client ---
 const visionClient = new vision.ImageAnnotatorClient({
     apiKey: GOOGLE_VISION_API_KEY
 });
@@ -64,7 +87,7 @@ module.exports = async (req, res) => {
         console.log('📨 Incoming webhook:', JSON.stringify(body).substring(0, 500));
 
         try {
-            // محاولة استخراج البيانات من الصيغ المختلفة اللي ممكن WAPilot يبعت بيها
+            // محاولة استخراج البيانات من الصيغ المختلفة
             let from = null;
             let messageType = null;
             let mediaId = null;
@@ -113,7 +136,7 @@ module.exports = async (req, res) => {
                     return;
                 }
 
-                console.log(`🖼️ Image URL: ${imageUrl.substring(0, 100)}...`);
+                console.log(`🖼️ Image URL received`);
 
                 // استدعاء Google Vision OCR
                 let extractedText = "";
@@ -136,6 +159,10 @@ module.exports = async (req, res) => {
                 let aiResponse = "";
                 if (extractedText.length > 5 && !extractedText.includes("عذراً") && !extractedText.includes("خطأ")) {
                     try {
+                        if (!model) {
+                            throw new Error("Gemini model not initialized. Check API key.");
+                        }
+
                         const prompt = `أنت مصحح آلي للمناهج الدراسية العربية. النص التالي مستخرج من ورقة إجابة طالب:
                         
 "${extractedText}"
@@ -148,10 +175,10 @@ module.exports = async (req, res) => {
 
                         const aiResult = await model.generateContent(prompt);
                         aiResponse = aiResult.response.text();
-                        console.log(`🤖 Gemini Success: ${aiResponse.length} characters`);
+                        console.log(`🤖 Gemini Success`);
                     } catch (aiError) {
                         console.error("❌ Gemini Error:", aiError.message);
-                        aiResponse = "خطأ في تحليل النص بالذكاء الاصطناعي.";
+                        aiResponse = "خطأ في تحليل النص بالذكاء الاصطناعي. تأكد من صلاحية مفتاح Gemini API.";
                     }
                 } else {
                     aiResponse = "لم يتم استخراج نص كافٍ للتحليل. تأكد من وضوح الصورة.";
@@ -170,7 +197,6 @@ module.exports = async (req, res) => {
                 
             } else {
                 // رسالة نصية عادية
-                const replyText = textContent || "";
                 await sendWAPilotMessage(
                     from, 
                     "📸 *مرحباً بك في بوت تصحيح الأوراق!*\n\nمن فضلك أرسل صورة واضحة لورقة الإجابة وسأقوم بـ:\n✅ استخراج النص المكتوب\n✅ تصحيح الأخطاء الإملائية\n✅ الإجابة عن الأسئلة\n\n*تأكد من أن الصورة واضحة ومضاءة جيداً.*"
@@ -192,5 +218,5 @@ module.exports = async (req, res) => {
     }
 
     // طلب GET للتأكد من أن الخدمة تعمل
-    res.status(200).send('✅ WAPilot OCR Bot is running!\n\nWebhook endpoint ready.');
+    res.status(200).send('✅ WAPilot OCR Bot is running!\n\nGemini: ' + (model ? 'Ready' : 'Not initialized'));
 };
