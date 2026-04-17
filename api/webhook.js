@@ -13,7 +13,7 @@ const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
 const GEMINI_API_KEY = process.env.Gemini_API_Key || process.env.GEMINI_API_KEY || '';
 
 // --- إعدادات OCR.Space (مجاني) ---
-const OCR_SPACE_API_KEY = '72d9a2c76e88957'; // ✅ تم إضافة علامات التنصيص
+const OCR_SPACE_API_KEY = '72d9a2c76e88957';
 
 // --- تهيئة Gemini ---
 let genAI;
@@ -38,7 +38,7 @@ if (GEMINI_API_KEY) {
     }
 }
 
-// --- دالة OCR باستخدام OCR.Space (مجانية 100%) ---
+// --- دالة OCR باستخدام OCR.Space ---
 async function extractTextFromImage(imageUrl) {
     console.log('👁️ Starting OCR.Space...');
     
@@ -48,6 +48,7 @@ async function extractTextFromImage(imageUrl) {
                 apikey: OCR_SPACE_API_KEY,
                 url: imageUrl,
                 language: 'ara',
+                filetype: 'JPG',
                 isOverlayRequired: false,
                 detectOrientation: true,
                 scale: true,
@@ -60,7 +61,7 @@ async function extractTextFromImage(imageUrl) {
         
         if (data.IsErroredOnProcessing) {
             console.error('❌ OCR Error:', data.ErrorMessage);
-            return "خطأ في استخراج النص: " + (data.ErrorMessage || '');
+            return "خطأ في استخراج النص: " + JSON.stringify(data.ErrorMessage).substring(0, 100);
         }
         
         const parsedText = data.ParsedResults?.[0]?.ParsedText || '';
@@ -79,7 +80,7 @@ async function extractTextFromImage(imageUrl) {
     }
 }
 
-// --- دالة إرسال رسالة عبر WAPILOT V2 ---
+// --- دالة إرسال رسالة ---
 async function sendWAPilotMessage(chatId, text) {
     try {
         console.log(`📤 Sending to ${chatId}: ${text.substring(0, 50)}...`);
@@ -104,7 +105,7 @@ async function sendWAPilotMessage(chatId, text) {
     }
 }
 
-// --- الدالة الرئيسية لـ Vercel ---
+// --- الدالة الرئيسية ---
 module.exports = async (req, res) => {
     
     const url = req.url || '';
@@ -112,15 +113,14 @@ module.exports = async (req, res) => {
     
     console.log(`📥 ${method} ${url}`);
 
-    // Webhook Verification (GET)
+    // Webhook Verification
     if (method === 'GET' && url === '/api/webhook') {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         return res.status(200).json({ 
             status: 'active',
             instance_id: INSTANCE_ID,
             gemini: geminiInitialized ? 'ready' : 'not initialized',
-            ocr: 'OCR.Space (Free)',
-            api: 'WAPILOT V2'
+            ocr: 'OCR.Space (Free)'
         });
     }
 
@@ -157,7 +157,7 @@ module.exports = async (req, res) => {
         `);
     }
 
-    // استقبال رسائل واتساب (POST)
+    // استقبال رسائل واتساب
     if (method === 'POST' && url === '/api/webhook') {
         const data = req.body;
         
