@@ -6,12 +6,13 @@ const INSTANCE_ID = "instance3532";
 const WAPILOT_TOKEN = "yzWzEjmxZpbifuOx6lWafYT3Ng69gaFpJGAdTsVc6N";
 const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
 
-// --- إعدادات Gemini API ---
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-// ✅ استخدام gemini-1.5-pro اللي بيدعم الصور
-const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent";
+// --- إعدادات Vertex AI ---
+const VERTEX_API_KEY = process.env.GEMINI_API_KEY || '';
+const PROJECT_ID = '1088721799548'; // من بياناتك
+const LOCATION = 'us-central1';
+const VERTEX_API_URL = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/gemini-1.5-pro:generateContent`;
 
-// --- دالة تحميل الصورة وتحويلها لـ Base64 ---
+// --- دالة تحميل الصورة ---
 async function imageUrlToBase64(url) {
     try {
         const response = await axios.get(url, { 
@@ -29,12 +30,13 @@ async function imageUrlToBase64(url) {
     }
 }
 
-// --- دالة تحليل الصورة باستخدام Gemini HTTP API ---
-async function analyzeImageWithGemini(imageBase64, mimeType) {
+// --- دالة تحليل الصورة باستخدام Vertex AI ---
+async function analyzeImageWithVertexAI(imageBase64, mimeType) {
     try {
         const requestBody = {
             contents: [
                 {
+                    role: "user",
                     parts: [
                         {
                             text: `أنت مصحح آلي للمناهج الدراسية العربية. الصورة المرفقة هي ورقة إجابة طالب مكتوبة بخط اليد باللغة العربية.
@@ -43,8 +45,7 @@ async function analyzeImageWithGemini(imageBase64, mimeType) {
 1. استخرج كل النص المكتوب في الصورة.
 2. صحح الأخطاء الإملائية والنحوية الواضحة.
 3. إذا كان هناك سؤال في النص، أجب عنه بإجابة نموذجية مختصرة.
-4. إذا لم يكن هناك سؤال، قدم ملخصاً بسيطاً للمحتوى.
-5. أجب باللغة العربية الفصحى.`
+4. أجب باللغة العربية الفصحى.`
                         },
                         {
                             inline_data: {
@@ -58,11 +59,12 @@ async function analyzeImageWithGemini(imageBase64, mimeType) {
         };
         
         const response = await axios.post(
-            `${GEMINI_API_URL}?key=${GEMINI_API_KEY}`,
+            VERTEX_API_URL,
             requestBody,
             {
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${VERTEX_API_KEY}`
                 },
                 timeout: 30000
             }
@@ -72,11 +74,11 @@ async function analyzeImageWithGemini(imageBase64, mimeType) {
         if (result.candidates && result.candidates[0] && result.candidates[0].content) {
             return result.candidates[0].content.parts[0].text;
         } else {
-            return "لم يتم الحصول على رد من Gemini.";
+            return "لم يتم الحصول على رد من Vertex AI.";
         }
         
     } catch (error) {
-        console.error('❌ Gemini API Error:', error.response?.data || error.message);
+        console.error('❌ Vertex AI Error:', error.response?.data || error.message);
         throw new Error('فشل تحليل الصورة: ' + (error.response?.data?.error?.message || error.message));
     }
 }
@@ -112,8 +114,7 @@ module.exports = async (req, res) => {
     if (method === 'GET' && url === '/api/webhook') {
         return res.status(200).json({ 
             status: 'active',
-            gemini_key: GEMINI_API_KEY ? 'present' : 'missing',
-            model: 'gemini-1.5-pro'
+            vertex_key: VERTEX_API_KEY ? 'present' : 'missing'
         });
     }
 
@@ -124,9 +125,8 @@ module.exports = async (req, res) => {
             <head><title>بوت تصحيح الأوراق</title></head>
             <body style="font-family: Arial; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
                 <h1>🤖 بوت تصحيح الأوراق</h1>
-                <p>🧠 Gemini Pro Vision: ${GEMINI_API_KEY ? '✅ جاهز' : '❌ غير مهيأ'}</p>
+                <p>🧠 Vertex AI: ${VERTEX_API_KEY ? '✅ جاهز' : '❌ غير مهيأ'}</p>
                 <p>📱 WAPilot: ✅ متصل</p>
-                <p style="color: #10b981;">🎉 جاهز لاستقبال الصور!</p>
             </body>
             </html>
         `);
@@ -154,12 +154,8 @@ module.exports = async (req, res) => {
         
         let chatId = rawChatId.includes('@') ? rawChatId : `${rawChatId}@c.us`;
         
-        console.log(`📱 From: ${chatId} | Image: ${isImage}`);
-        
-        if (isImage && mediaUrl && GEMINI_API_KEY) {
-            console.log('🖼️ Processing with Gemini Pro Vision...');
-            
-            await sendWAPilotMessage(chatId, "⏳ جاري تحليل الصورة باستخدام Gemini Pro Vision...");
+        if (isImage && mediaUrl && VERTEX_API_KEY) {
+            await sendWAPilotMessage(chatId, "⏳ جاري تحليل الصورة باستخدام Vertex AI...");
             
             try {
                 const imageData = await imageUrlToBase64(mediaUrl);
@@ -169,23 +165,16 @@ module.exports = async (req, res) => {
                     return res.status(200).json({ ok: false });
                 }
                 
-                console.log('✅ Image converted, sending to Gemini Pro...');
+                const analysis = await analyzeImageWithVertexAI(imageData.base64, imageData.mimeType);
                 
-                const analysis = await analyzeImageWithGemini(imageData.base64, imageData.mimeType);
-                
-                console.log('✅ Gemini response received');
-                
-                await sendWAPilotMessage(chatId, `🤖 *تحليل Gemini Pro:*\n\n${analysis}`);
+                await sendWAPilotMessage(chatId, `🤖 *تحليل Vertex AI:*\n\n${analysis}`);
                 
             } catch (error) {
-                console.error('❌ Error:', error.message);
                 await sendWAPilotMessage(chatId, `❌ ${error.message}`);
             }
             
-        } else if (isImage && !GEMINI_API_KEY) {
-            await sendWAPilotMessage(chatId, "❌ GEMINI_API_KEY غير موجود في Vercel.");
         } else {
-            await sendWAPilotMessage(chatId, "📸 *مرحباً بك في بوت تصحيح الأوراق!*\n\nمن فضلك أرسل صورة واضحة لورقة الإجابة.");
+            await sendWAPilotMessage(chatId, "📸 أرسل صورة ورقة الإجابة");
         }
         
         return res.status(200).json({ ok: true });
