@@ -47,7 +47,7 @@ async function extractTextFromImage(imageUrl) {
             params: {
                 apikey: OCR_SPACE_API_KEY,
                 url: imageUrl,
-                language: 'ara',
+                language: 'arabic',     // ✅ تم التصحيح
                 filetype: 'JPG',
                 isOverlayRequired: false,
                 detectOrientation: true,
