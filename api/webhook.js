@@ -1,29 +1,38 @@
 // api/webhook.js
 const axios = require('axios');
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const { VertexAI } = require('@google-cloud/vertexai');
 
 // --- إعدادات WAPILOT V2 ---
 const INSTANCE_ID = "instance3532";
 const WAPILOT_TOKEN = "yzWzEjmxZpbifuOx6lWafYT3Ng69gaFpJGAdTsVc6N";
 const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
 
-// --- إعدادات Google Gemini ---
-const GEMINI_API_KEY = process.env.Gemini_API_Key || process.env.GEMINI_API_KEY || '';
+// --- إعدادات Vertex AI ---
+const VERTEX_API_KEY = process.env.Gemini_API_Key || process.env.GEMINI_API_KEY || '';
+const PROJECT_ID = '381737553060'; // من الـ Logs بتاعتك
+const LOCATION = 'us-central1';
 
-// --- تهيئة Gemini Vision ---
-let genAI;
+// --- تهيئة Vertex AI ---
+let vertexAI;
 let model;
 let geminiInitialized = false;
 
-if (GEMINI_API_KEY) {
+if (VERTEX_API_KEY) {
     try {
-        genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-        // ✅ النموذج اللي بيدعم الصور
-        model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
+        vertexAI = new VertexAI({
+            project: PROJECT_ID,
+            location: LOCATION,
+            apiKey: VERTEX_API_KEY
+        });
+        
+        model = vertexAI.preview.getGenerativeModel({
+            model: 'gemini-1.5-pro'
+        });
+        
         geminiInitialized = true;
-        console.log('✅ Gemini Pro Vision Ready');
+        console.log('✅ Vertex AI Ready');
     } catch (error) {
-        console.error('❌ Gemini Error:', error.message);
+        console.error('❌ Vertex AI Error:', error.message);
     }
 }
 
@@ -86,9 +95,7 @@ module.exports = async (req, res) => {
             <head><title>بوت تصحيح الأوراق</title></head>
             <body style="font-family: Arial; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
                 <h1>🤖 بوت تصحيح الأوراق</h1>
-                <p>✅ النظام شغال 100%</p>
-                <p>🧠 Gemini Pro Vision: ${geminiInitialized ? '✅' : '❌'} | 📱 WAPilot: ✅</p>
-                <p style="color: #10b981;">🎉 مجاني بالكامل!</p>
+                <p>✅ Vertex AI: ${geminiInitialized ? '✅' : '❌'}</p>
             </body>
             </html>
         `);
@@ -112,7 +119,7 @@ module.exports = async (req, res) => {
         let chatId = rawChatId.includes('@') ? rawChatId : `${rawChatId}@c.us`;
         
         if (mediaUrl && model) {
-            await sendWAPilotMessage(chatId, "⏳ جاري تحليل الصورة باستخدام Gemini Vision...");
+            await sendWAPilotMessage(chatId, "⏳ جاري تحليل الصورة...");
             
             try {
                 const imageData = await imageUrlToBase64(mediaUrl);
@@ -123,28 +130,31 @@ module.exports = async (req, res) => {
                 }
                 
                 const prompt = `أنت مصحح آلي. الصورة المرفقة هي ورقة إجابة مكتوبة بالعربية.
+استخرج النص، صحح الأخطاء، وأجب عن أي سؤال. أجب بالعربية.`;
 
-المطلوب:
-1. استخرج النص المكتوب في الصورة.
-2. صحح الأخطاء الإملائية.
-3. أجب عن أي سؤال موجود.
-4. أجب بالعربية.`;
-
-                const imagePart = {
-                    inlineData: {
-                        data: imageData.base64,
-                        mimeType: imageData.mimeType
-                    }
+                const request = {
+                    contents: [{
+                        role: 'user',
+                        parts: [
+                            { text: prompt },
+                            { 
+                                inlineData: {
+                                    mimeType: imageData.mimeType,
+                                    data: imageData.base64
+                                }
+                            }
+                        ]
+                    }]
                 };
                 
-                const result = await model.generateContent([prompt, imagePart]);
-                const response = result.response.text();
+                const result = await model.generateContent(request);
+                const response = result.response.candidates[0].content.parts[0].text;
                 
-                await sendWAPilotMessage(chatId, `🤖 *تحليل Gemini:*\n\n${response}`);
+                await sendWAPilotMessage(chatId, `🤖 *التحليل:*\n\n${response}`);
                 
             } catch (error) {
-                console.error('❌ Gemini Vision Error:', error.message);
-                await sendWAPilotMessage(chatId, "❌ خطأ في تحليل الصورة: " + error.message.substring(0, 100));
+                console.error('❌ Error:', error.message);
+                await sendWAPilotMessage(chatId, "❌ خطأ: " + error.message.substring(0, 100));
             }
             
         } else {
