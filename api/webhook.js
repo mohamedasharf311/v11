@@ -1,39 +1,14 @@
 // api/webhook.js
 const axios = require('axios');
-const { VertexAI } = require('@google-cloud/vertexai');
 
 // --- إعدادات WAPILOT V2 ---
 const INSTANCE_ID = "instance3532";
 const WAPILOT_TOKEN = "yzWzEjmxZpbifuOx6lWafYT3Ng69gaFpJGAdTsVc6N";
 const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
 
-// --- إعدادات Vertex AI ---
-const VERTEX_API_KEY = process.env.GEMINI_API_KEY || '';
-const PROJECT_ID = '1088721799548'; // من بياناتك
-const LOCATION = 'us-central1';
-
-// --- تهيئة Vertex AI ---
-let model;
-let geminiInitialized = false;
-
-if (VERTEX_API_KEY) {
-    try {
-        const vertexAI = new VertexAI({
-            project: PROJECT_ID,
-            location: LOCATION,
-            apiKey: VERTEX_API_KEY
-        });
-        
-        model = vertexAI.preview.getGenerativeModel({
-            model: 'gemini-1.5-pro'
-        });
-        
-        geminiInitialized = true;
-        console.log('✅ Vertex AI Ready with Gemini Pro Vision');
-    } catch (error) {
-        console.error('❌ Vertex AI Error:', error.message);
-    }
-}
+// --- إعدادات Gemini API ---
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent";
 
 // --- دالة تحميل الصورة وتحويلها لـ Base64 ---
 async function imageUrlToBase64(url) {
@@ -50,6 +25,59 @@ async function imageUrlToBase64(url) {
     } catch (error) {
         console.error('❌ Error converting image:', error.message);
         return null;
+    }
+}
+
+// --- دالة تحليل الصورة باستخدام Gemini HTTP API ---
+async function analyzeImageWithGemini(imageBase64, mimeType) {
+    try {
+        const requestBody = {
+            contents: [
+                {
+                    parts: [
+                        {
+                            text: `أنت مصحح آلي للمناهج الدراسية العربية. الصورة المرفقة هي ورقة إجابة طالب مكتوبة بخط اليد باللغة العربية.
+
+المطلوب:
+1. استخرج كل النص المكتوب في الصورة.
+2. صحح الأخطاء الإملائية والنحوية الواضحة.
+3. إذا كان هناك سؤال في النص، أجب عنه بإجابة نموذجية مختصرة.
+4. إذا لم يكن هناك سؤال، قدم ملخصاً بسيطاً للمحتوى.
+5. أجب باللغة العربية الفصحى.`
+                        },
+                        {
+                            inline_data: {
+                                mime_type: mimeType,
+                                data: imageBase64
+                            }
+                        }
+                    ]
+                }
+            ]
+        };
+        
+        const response = await axios.post(
+            `${GEMINI_API_URL}?key=${GEMINI_API_KEY}`,
+            requestBody,
+            {
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                timeout: 30000
+            }
+        );
+        
+        // استخراج النص من الرد
+        const result = response.data;
+        if (result.candidates && result.candidates[0] && result.candidates[0].content) {
+            return result.candidates[0].content.parts[0].text;
+        } else {
+            return "لم يتم الحصول على رد من Gemini.";
+        }
+        
+    } catch (error) {
+        console.error('❌ Gemini API Error:', error.response?.data || error.message);
+        throw new Error('فشل تحليل الصورة: ' + (error.response?.data?.error?.message || error.message));
     }
 }
 
@@ -84,7 +112,7 @@ module.exports = async (req, res) => {
     if (method === 'GET' && url === '/api/webhook') {
         return res.status(200).json({ 
             status: 'active',
-            gemini: geminiInitialized ? 'ready' : 'no'
+            gemini_key: GEMINI_API_KEY ? 'present' : 'missing'
         });
     }
 
@@ -95,8 +123,9 @@ module.exports = async (req, res) => {
             <head><title>بوت تصحيح الأوراق</title></head>
             <body style="font-family: Arial; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
                 <h1>🤖 بوت تصحيح الأوراق</h1>
-                <p>🧠 Vertex AI: ${geminiInitialized ? '✅' : '❌'}</p>
-                <p>📱 WAPilot: ✅</p>
+                <p>🧠 Gemini HTTP API: ${GEMINI_API_KEY ? '✅ جاهز' : '❌ غير مهيأ'}</p>
+                <p>📱 WAPilot: ✅ متصل</p>
+                <p style="color: #10b981;">🎉 جاهز لاستقبال الصور!</p>
             </body>
             </html>
         `);
@@ -126,12 +155,13 @@ module.exports = async (req, res) => {
         
         console.log(`📱 From: ${chatId} | Image: ${isImage}`);
         
-        if (isImage && mediaUrl && model) {
-            console.log('🖼️ Processing with Vertex AI...');
+        if (isImage && mediaUrl && GEMINI_API_KEY) {
+            console.log('🖼️ Processing with Gemini HTTP API...');
             
-            await sendWAPilotMessage(chatId, "⏳ جاري تحليل الصورة...");
+            await sendWAPilotMessage(chatId, "⏳ جاري تحليل الصورة باستخدام Gemini...");
             
             try {
+                // تحميل الصورة وتحويلها لـ Base64
                 const imageData = await imageUrlToBase64(mediaUrl);
                 
                 if (!imageData) {
@@ -139,37 +169,26 @@ module.exports = async (req, res) => {
                     return res.status(200).json({ ok: false });
                 }
                 
-                const prompt = `أنت مصحح آلي. الصورة المرفقة هي ورقة إجابة مكتوبة بالعربية. استخرج النص، صحح الأخطاء، وأجب عن أي سؤال. أجب بالعربية.`;
-
-                const request = {
-                    contents: [{
-                        role: 'user',
-                        parts: [
-                            { text: prompt },
-                            { 
-                                inlineData: {
-                                    mimeType: imageData.mimeType,
-                                    data: imageData.base64
-                                }
-                            }
-                        ]
-                    }]
-                };
+                console.log('✅ Image converted, sending to Gemini...');
                 
-                const result = await model.generateContent(request);
-                const response = result.response.candidates[0].content.parts[0].text;
+                // تحليل الصورة
+                const analysis = await analyzeImageWithGemini(imageData.base64, imageData.mimeType);
                 
-                await sendWAPilotMessage(chatId, `🤖 *التحليل:*\n\n${response}`);
+                console.log('✅ Gemini response received');
+                
+                // إرسال الرد
+                await sendWAPilotMessage(chatId, `🤖 *تحليل Gemini:*\n\n${analysis}`);
                 
             } catch (error) {
                 console.error('❌ Error:', error.message);
-                await sendWAPilotMessage(chatId, "❌ خطأ: " + error.message.substring(0, 100));
+                await sendWAPilotMessage(chatId, `❌ ${error.message}`);
             }
             
-        } else if (isImage && !model) {
-            await sendWAPilotMessage(chatId, "❌ Vertex AI غير مهيأ.");
+        } else if (isImage && !GEMINI_API_KEY) {
+            await sendWAPilotMessage(chatId, "❌ GEMINI_API_KEY غير موجود في Vercel.");
         } else {
-            await sendWAPilotMessage(chatId, "📸 أرسل صورة ورقة الإجابة");
+            // رسالة نصية
+            await sendWAPilotMessage(chatId, "📸 *مرحباً بك في بوت تصحيح الأوراق!*\n\nمن فضلك أرسل صورة واضحة لورقة الإجابة.\n\nسأقوم بتحليلها مباشرة باستخدام Gemini Vision 🧠");
         }
         
         return res.status(200).json({ ok: true });
