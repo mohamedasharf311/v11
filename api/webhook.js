@@ -1,404 +1,338 @@
-// api/webhook.js
-const axios = require('axios');
-const vision = require('@google-cloud/vision');
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-const fs = require('fs');
-const path = require('path');
-
-// --- إعدادات WAPilot ---
-const INSTANCE_ID = "instance3532";
-const WAPILOT_TOKEN = "yzWzEjmxZpbifuOx6lWafYT3Ng69gaFpJGAdTsVc6N";
-const BASE_URL = "https://api.wapilot.com/v1";
-
-// --- إعدادات Google (من Environment Variables) ---
-// بدعم الأسماء المختلفة للمتغيرات
-const GEMINI_API_KEY = process.env.Gemini_API_Key || process.env.GEMINI_API_KEY || '';
-const GOOGLE_VISION_API_KEY = process.env.GOOGLE_VISION_API_KEY || '';
-
-// --- تهيئة Gemini ---
-let genAI;
-let model;
-let geminiInitialized = false;
-let geminiError = '';
-
-if (GEMINI_API_KEY) {
-    try {
-        console.log('🔑 Initializing Gemini with key length:', GEMINI_API_KEY.length);
-        
-        if (GEMINI_API_KEY.startsWith('AQ.')) {
-            console.log('✅ Using Vertex AI configuration');
-            genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-            model = genAI.getGenerativeModel({ 
-                model: "gemini-1.5-flash"
-            });
-        } else {
-            console.log('✅ Using Google AI Studio configuration');
-            genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-            model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>لوحة تحكم بوت تصحيح الأوراق</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
-        geminiInitialized = true;
-    } catch (error) {
-        console.error('❌ Error initializing Gemini:', error.message);
-        geminiError = error.message;
-    }
-} else {
-    console.warn('⚠️ GEMINI_API_KEY not found in environment variables');
-    console.log('Available env vars:', Object.keys(process.env).filter(k => k.includes('GEMINI') || k.includes('KEY')));
-}
 
-// --- تهيئة Vision Client ---
-let visionClient;
-let visionInitialized = false;
-let visionError = '';
-
-if (GOOGLE_VISION_API_KEY) {
-    try {
-        visionClient = new vision.ImageAnnotatorClient({
-            apiKey: GOOGLE_VISION_API_KEY
-        });
-        visionInitialized = true;
-        console.log('✅ Vision client initialized');
-    } catch (error) {
-        console.error('❌ Error initializing Vision:', error.message);
-        visionError = error.message;
-    }
-} else {
-    console.warn('⚠️ GOOGLE_VISION_API_KEY not found');
-}
-
-// --- دالة إرسال رسالة عبر WAPilot ---
-async function sendWAPilotMessage(to, text) {
-    try {
-        const shortText = text.length > 4000 ? text.substring(0, 3990) + "..." : text;
-        
-        await axios.post(`${BASE_URL}/send-message`, {
-            instance_id: INSTANCE_ID,
-            token: WAPILOT_TOKEN,
-            phone: to,
-            message: shortText
-        });
-        console.log(`✅ Message sent to ${to}`);
-    } catch (error) {
-        console.error("❌ Error sending message:", error.response?.data || error.message);
-    }
-}
-
-// --- دالة جلب صورة من WAPilot ---
-async function getWAPilotMedia(mediaId) {
-    try {
-        const response = await axios.get(`${BASE_URL}/media`, {
-            params: {
-                instance_id: INSTANCE_ID,
-                token: WAPILOT_TOKEN,
-                media_id: mediaId
-            }
-        });
-        return response.data.url || response.data.base64 || response.data.file_url;
-    } catch (error) {
-        console.error("❌ Error fetching media:", error.response?.data || error.message);
-        return null;
-    }
-}
-
-// =============================================
-// الدالة الرئيسية لـ Vercel
-// =============================================
-module.exports = async (req, res) => {
-    
-    const url = req.url || '';
-    const method = req.method || 'GET';
-    
-    console.log(`📥 ${method} ${url}`);
-
-    // =============================================
-    // 1️⃣ الصفحة الرئيسية (Dashboard HTML)
-    // =============================================
-    if (method === 'GET' && (url === '/' || url === '')) {
-        try {
-            const htmlPath = path.join(process.cwd(), 'public', 'index.html');
-            if (fs.existsSync(htmlPath)) {
-                const html = fs.readFileSync(htmlPath, 'utf8');
-                res.setHeader('Content-Type', 'text/html; charset=utf-8');
-                res.status(200).send(html);
-            } else {
-                // صفحة احتياطية لو الملف مش موجود
-                res.setHeader('Content-Type', 'text/html; charset=utf-8');
-                res.status(200).send(`
-                    <!DOCTYPE html>
-                    <html dir="rtl">
-                    <head>
-                        <title>بوت تصحيح الأوراق</title>
-                        <style>
-                            body { font-family: Arial; text-align: center; padding: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
-                            .container { background: rgba(255,255,255,0.95); border-radius: 20px; padding: 40px; max-width: 600px; margin: 0 auto; color: #333; }
-                            code { background: #1a1a2e; color: #00ff88; padding: 10px; border-radius: 8px; display: block; margin: 20px 0; }
-                            .status { display: inline-block; padding: 5px 15px; border-radius: 50px; margin: 5px; }
-                            .online { background: #d4edda; color: #155724; }
-                            .offline { background: #f8d7da; color: #721c24; }
-                        </style>
-                    </head>
-                    <body>
-                        <div class="container">
-                            <h1>🤖 بوت تصحيح الأوراق يعمل!</h1>
-                            <p>Webhook URL:</p>
-                            <code>${req.headers.host}/api/webhook</code>
-                            <p>حالة الخدمات:</p>
-                            <div>
-                                <span class="status ${geminiInitialized ? 'online' : 'offline'}">🧠 Gemini: ${geminiInitialized ? 'متصل' : 'غير متصل'}</span>
-                                <span class="status ${visionInitialized ? 'online' : 'offline'}">👁️ Vision: ${visionInitialized ? 'متصل' : 'غير متصل'}</span>
-                                <span class="status ${INSTANCE_ID ? 'online' : 'offline'}">📱 WAPilot: ${INSTANCE_ID ? 'متصل' : 'غير متصل'}</span>
-                            </div>
-                            <p style="margin-top: 20px;">
-                                🔑 Gemini Key: ${GEMINI_API_KEY ? 'موجود ✓' : 'مفقود ✗'}<br>
-                                👁️ Vision Key: ${GOOGLE_VISION_API_KEY ? 'موجود ✓' : 'مفقود ✗'}
-                            </p>
-                            <p style="margin-top: 20px;">⬆️ استخدم الرابط أعلاه في إعدادات WAPilot</p>
-                        </div>
-                    </body>
-                    </html>
-                `);
-            }
-        } catch (error) {
-            console.error('Error serving HTML:', error);
-            res.status(500).send('Error loading page');
+        body {
+            font-family: 'Segoe UI', 'Tahoma', 'Arial', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
         }
-        return;
-    }
 
-    // =============================================
-    // 2️⃣ نقطة API: فحص Gemini
-    // =============================================
-    if (method === 'GET' && url === '/api/check-gemini') {
-        res.setHeader('Content-Type', 'application/json; charset=utf-8');
-        
-        try {
-            if (!GEMINI_API_KEY) {
-                return res.status(200).json({ 
-                    status: 'error', 
-                    message: 'Gemini API Key غير موجود في Environment Variables',
-                    envKeys: Object.keys(process.env).filter(k => k.toLowerCase().includes('gemini'))
-                });
-            }
-            
-            if (!model) {
-                return res.status(200).json({ 
-                    status: 'error', 
-                    message: 'لم يتم تهيئة نموذج Gemini: ' + geminiError
-                });
-            }
-            
-            // اختبار سريع
-            const testResult = await model.generateContent('قل "تمام"');
-            const response = testResult.response.text();
-            
-            res.status(200).json({ 
-                status: 'ok', 
-                model: 'Gemini 1.5 Flash',
-                response: response.substring(0, 30)
-            });
-        } catch (error) {
-            console.error('Gemini check error:', error.message);
-            res.status(200).json({ 
-                status: 'error', 
-                message: error.message 
-            });
+        .container {
+            max-width: 700px;
+            width: 100%;
+            background: rgba(255, 255, 255, 0.98);
+            border-radius: 24px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            padding: 40px;
+            text-align: center;
         }
-        return;
-    }
 
-    // =============================================
-    // 3️⃣ نقطة API: فحص Google Vision
-    // =============================================
-    if (method === 'GET' && url === '/api/check-vision') {
-        res.setHeader('Content-Type', 'application/json; charset=utf-8');
-        
-        try {
-            if (!GOOGLE_VISION_API_KEY) {
-                return res.status(200).json({ 
-                    status: 'error', 
-                    message: 'Vision API Key غير موجود'
-                });
-            }
-            
-            if (!visionClient) {
-                return res.status(200).json({ 
-                    status: 'error', 
-                    message: 'لم يتم تهيئة Vision Client: ' + visionError
-                });
-            }
-            
-            res.status(200).json({ 
-                status: 'ok', 
-                api: 'Cloud Vision API',
-                initialized: true
-            });
-        } catch (error) {
-            console.error('Vision check error:', error.message);
-            res.status(200).json({ 
-                status: 'error', 
-                message: error.message 
-            });
+        h1 {
+            color: #1a1a2e;
+            font-size: 2.2rem;
+            margin-bottom: 10px;
         }
-        return;
-    }
 
-    // =============================================
-    // 4️⃣ نقطة API: فحص WAPilot
-    // =============================================
-    if (method === 'GET' && url === '/api/check-wapilot') {
-        res.setHeader('Content-Type', 'application/json; charset=utf-8');
-        
-        try {
-            if (INSTANCE_ID && WAPILOT_TOKEN) {
-                res.status(200).json({ 
-                    status: 'ok', 
-                    instance: INSTANCE_ID,
-                    configured: true
-                });
-            } else {
-                res.status(200).json({ 
-                    status: 'error', 
-                    message: 'بيانات WAPilot غير مكتملة' 
-                });
-            }
-        } catch (error) {
-            console.error('WAPilot check error:', error.message);
-            res.status(200).json({ 
-                status: 'error', 
-                message: error.message 
+        .subtitle {
+            color: #666;
+            font-size: 1.1rem;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .status-card {
+            background: #f8f9fa;
+            border-radius: 16px;
+            padding: 25px 20px;
+            transition: all 0.3s ease;
+            border: 2px solid transparent;
+        }
+
+        .status-card .icon {
+            font-size: 3rem;
+            margin-bottom: 15px;
+        }
+
+        .status-card h3 {
+            color: #333;
+            font-size: 1.2rem;
+            margin-bottom: 15px;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 16px;
+            border-radius: 50px;
+            font-weight: bold;
+            font-size: 0.95rem;
+        }
+
+        .online {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .offline {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .checking {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeeba;
+        }
+
+        .info-section {
+            background: #e8f4fd;
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 25px;
+            text-align: right;
+        }
+
+        .info-section h4 {
+            color: #004085;
+            margin-bottom: 12px;
+            font-size: 1.1rem;
+        }
+
+        .webhook-url {
+            background: #1a1a2e;
+            color: #00ff88;
+            padding: 12px 15px;
+            border-radius: 12px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            direction: ltr;
+            text-align: left;
+            margin: 15px 0;
+            word-break: break-all;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .copy-btn {
+            background: #2d2d44;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+
+        .copy-btn:hover {
+            background: #3d3d5c;
+        }
+
+        .refresh-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 14px 30px;
+            border-radius: 50px;
+            font-size: 1.1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 10px;
+        }
+
+        .refresh-btn:hover {
+            transform: scale(1.02);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
+        }
+
+        .key-status {
+            margin-top: 15px;
+            padding: 10px;
+            background: #f1f3f4;
+            border-radius: 10px;
+            font-size: 0.9rem;
+        }
+
+        .loading {
+            opacity: 0.7;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 بوت تصحيح الأوراق</h1>
+        <div class="subtitle">لوحة تحكم حالة النظام</div>
+
+        <!-- حالة الخدمات -->
+        <div class="status-grid">
+            <div class="status-card">
+                <div class="icon">🧠</div>
+                <h3>Gemini AI</h3>
+                <div id="gemini-status">
+                    <span class="status-badge checking">⏳ جاري الفحص...</span>
+                </div>
+            </div>
+
+            <div class="status-card">
+                <div class="icon">👁️</div>
+                <h3>Google Vision</h3>
+                <div id="vision-status">
+                    <span class="status-badge checking">⏳ جاري الفحص...</span>
+                </div>
+            </div>
+
+            <div class="status-card">
+                <div class="icon">📱</div>
+                <h3>WAPilot</h3>
+                <div id="wapilot-status">
+                    <span class="status-badge checking">⏳ جاري الفحص...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- معلومات Webhook -->
+        <div class="info-section">
+            <h4>🔗 رابط Webhook للربط مع WAPilot</h4>
+            <div class="webhook-url">
+                <span id="url-text">جاري التحميل...</span>
+                <button class="copy-btn" onclick="copyWebhookUrl()">📋 نسخ</button>
+            </div>
+        </div>
+
+        <!-- حالة المفاتيح -->
+        <div class="key-status" id="key-status">
+            جاري فحص المفاتيح...
+        </div>
+
+        <button class="refresh-btn" onclick="checkAllStatus()">
+            🔄 تحديث الحالة
+        </button>
+
+        <div style="margin-top: 20px; color: #888; font-size: 0.85rem;">
+            Webhook Endpoint: <code style="background:#f0f0f0; padding:2px 6px; border-radius:4px;">/api/webhook</code>
+        </div>
+    </div>
+
+    <script>
+        const baseUrl = window.location.origin;
+        const webhookUrl = baseUrl + '/api/webhook';
+        document.getElementById('url-text').textContent = webhookUrl;
+
+        function copyWebhookUrl() {
+            navigator.clipboard.writeText(webhookUrl).then(() => {
+                alert('✅ تم نسخ رابط Webhook!');
+            }).catch(() => {
+                prompt('انسخ الرابط يدوياً:', webhookUrl);
             });
         }
-        return;
-    }
 
-    // =============================================
-    // 5️⃣ Webhook Verification (GET) - للتحقق من WAPilot
-    // =============================================
-    if (method === 'GET' && url === '/api/webhook') {
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.status(200).send(`✅ WAPilot OCR Bot is running!\n\nGemini: ${geminiInitialized ? 'Ready' : 'Not initialized'}\nVision: ${visionInitialized ? 'Ready' : 'Not initialized'}\n\nGemini Key: ${GEMINI_API_KEY ? 'Present' : 'Missing'}\nVision Key: ${GOOGLE_VISION_API_KEY ? 'Present' : 'Missing'}`);
-        return;
-    }
-
-    // =============================================
-    // 6️⃣ Webhook الرئيسي (POST) - استقبال رسائل واتساب
-    // =============================================
-    if (method === 'POST' && url === '/api/webhook') {
-        const { body } = req;
-        console.log('📨 Incoming webhook:', JSON.stringify(body).substring(0, 300));
-
-        try {
-            let from = null;
-            let messageType = null;
-            let mediaId = null;
-            
-            // استخراج البيانات من الصيغ المختلفة
-            if (body.message) {
-                from = body.message.from || body.message.chatId;
-                messageType = body.message.type;
-                if (body.message.media) {
-                    mediaId = body.message.media.id;
-                } else if (body.message.id && messageType === 'image') {
-                    mediaId = body.message.id;
-                }
-            }
-            
-            if (!from && body.from) from = body.from;
-            if (!messageType && body.type) messageType = body.type;
-            if (!mediaId && body.mediaId) mediaId = body.mediaId;
-            if (!mediaId && body.media?.id) mediaId = body.media.id;
-            
-            if (!from) {
-                console.log('⚠️ No sender found');
-                res.status(200).json({ success: false, error: "No sender" });
-                return;
-            }
-
-            console.log(`📱 From: ${from} | Type: ${messageType}`);
-
-            // معالجة الصورة
-            if (messageType === 'image' || mediaId) {
+        async function checkAPI(endpoint) {
+            try {
+                const response = await fetch(baseUrl + endpoint);
+                const text = await response.text();
                 
-                await sendWAPilotMessage(from, "⏳ جاري تحليل الصورة واستخراج النص...");
-
-                const imageUrl = await getWAPilotMedia(mediaId);
-                
-                if (!imageUrl) {
-                    await sendWAPilotMessage(from, "❌ لم أتمكن من تحميل الصورة.");
-                    res.status(200).json({ success: false });
-                    return;
+                // محاولة تحويل النص لـ JSON
+                try {
+                    return JSON.parse(text);
+                } catch (e) {
+                    // لو مش JSON، نرجع النص كرسالة خطأ
+                    return { status: 'error', message: 'Invalid response: ' + text.substring(0, 50) };
                 }
+            } catch (error) {
+                return { status: 'error', message: error.message };
+            }
+        }
 
-                // OCR
-                let extractedText = "";
-                if (visionClient) {
-                    try {
-                        const [result] = await visionClient.textDetection(imageUrl);
-                        const detections = result.textAnnotations;
-                        
-                        if (detections && detections.length > 0) {
-                            extractedText = detections[0].description;
-                        } else {
-                            extractedText = "عذراً، لم يتم التعرف على أي نص.";
-                        }
-                    } catch (ocrError) {
-                        console.error("OCR Error:", ocrError.message);
-                        extractedText = "خطأ في استخراج النص.";
-                    }
+        function updateStatus(elementId, data, serviceName) {
+            const element = document.getElementById(elementId);
+            
+            if (data.status === 'ok') {
+                let extraInfo = '';
+                if (data.model) extraInfo = `<br><small>${data.model}</small>`;
+                if (data.instance) extraInfo = `<br><small>Instance: ${data.instance}</small>`;
+                
+                element.innerHTML = `
+                    <span class="status-badge online">
+                        ✅ متصل
+                    </span>
+                    ${extraInfo}
+                `;
+                return true;
+            } else {
+                element.innerHTML = `
+                    <span class="status-badge offline">
+                        ❌ غير متصل
+                    </span>
+                    <br><small style="color:#721c24;">${data.message || 'خطأ غير معروف'}</small>
+                `;
+                return false;
+            }
+        }
+
+        async function checkAllStatus() {
+            // إعادة ضبط الحالة
+            document.getElementById('gemini-status').innerHTML = '<span class="status-badge checking">⏳ جاري الفحص...</span>';
+            document.getElementById('vision-status').innerHTML = '<span class="status-badge checking">⏳ جاري الفحص...</span>';
+            document.getElementById('wapilot-status').innerHTML = '<span class="status-badge checking">⏳ جاري الفحص...</span>';
+            
+            // فحص Webhook الرئيسي أولاً (عشان نعرف حالة المفاتيح)
+            try {
+                const webhookResponse = await fetch(baseUrl + '/api/webhook');
+                const webhookText = await webhookResponse.text();
+                
+                // استخراج معلومات المفاتيح من النص
+                const geminiReady = webhookText.includes('Gemini: Ready');
+                const visionReady = webhookText.includes('Vision: Ready');
+                const geminiKeyPresent = webhookText.includes('Gemini Key: Present');
+                const visionKeyPresent = webhookText.includes('Vision Key: Present');
+                
+                document.getElementById('key-status').innerHTML = `
+                    🔑 Gemini Key: ${geminiKeyPresent ? '✅ موجود' : '❌ مفقود'} | 
+                    👁️ Vision Key: ${visionKeyPresent ? '✅ موجود' : '❌ مفقود'}<br>
+                    <small>${webhookText.substring(0, 100)}...</small>
+                `;
+                
+                // تحديث الحالات بناءً على النص
+                if (geminiReady) {
+                    document.getElementById('gemini-status').innerHTML = '<span class="status-badge online">✅ متصل (Gemini Ready)</span>';
                 } else {
-                    extractedText = "Vision API غير مهيأة.";
+                    document.getElementById('gemini-status').innerHTML = '<span class="status-badge offline">❌ غير متصل</span>';
                 }
-
-                // Gemini
-                let aiResponse = "";
-                if (extractedText.length > 5 && !extractedText.includes("عذراً") && !extractedText.includes("خطأ")) {
-                    if (model) {
-                        try {
-                            const prompt = `أنت مصحح آلي. النص التالي من ورقة إجابة:
-                            
-"${extractedText}"
-
-المطلوب: صحح الأخطاء الإملائية، وأجب عن أي سؤال. أجب بالعربية.`;
-
-                            const aiResult = await model.generateContent(prompt);
-                            aiResponse = aiResult.response.text();
-                        } catch (aiError) {
-                            console.error("Gemini Error:", aiError.message);
-                            aiResponse = "خطأ في التحليل.";
-                        }
-                    } else {
-                        aiResponse = "Gemini غير مهيأ.";
-                    }
+                
+                if (visionReady) {
+                    document.getElementById('vision-status').innerHTML = '<span class="status-badge online">✅ متصل (Vision Ready)</span>';
                 } else {
-                    aiResponse = "لم يتم استخراج نص كافٍ.";
+                    document.getElementById('vision-status').innerHTML = '<span class="status-badge offline">❌ غير متصل</span>';
                 }
-
-                // الرد
-                let finalMessage = `📝 النص المستخرج:\n${extractedText.substring(0, 500)}\n`;
-                finalMessage += `━━━━━━━━━━━━━━━\n`;
-                finalMessage += `🤖 تحليل Gemini:\n${aiResponse.substring(0, 800)}`;
                 
-                finalMessage = finalMessage.replace(/[*_~`]/g, '');
+                document.getElementById('wapilot-status').innerHTML = '<span class="status-badge online">✅ متصل (Instance Ready)</span>';
                 
-                await sendWAPilotMessage(from, finalMessage);
-                
-            } else {
-                await sendWAPilotMessage(
-                    from, 
-                    "📸 مرحباً! من فضلك أرسل صورة ورقة الإجابة لتحليلها."
-                );
+            } catch (error) {
+                console.error('Error checking status:', error);
+                document.getElementById('key-status').innerHTML = '❌ خطأ في الاتصال بالخادم';
             }
-
-        } catch (error) {
-            console.error("❌ General Error:", error.message);
         }
 
-        res.status(200).json({ success: true });
-        return;
-    }
-
-    // =============================================
-    // أي طلب تاني - 404
-    // =============================================
-    res.status(404).json({ error: 'Not Found', url: url });
-};
+        // فحص تلقائي عند التحميل
+        window.onload = () => {
+            checkAllStatus();
+        };
+    </script>
+</body>
+</html>
