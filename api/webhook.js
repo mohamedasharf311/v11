@@ -13,7 +13,7 @@ const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
 const GEMINI_API_KEY = process.env.Gemini_API_Key || process.env.GEMINI_API_KEY || '';
 
 // --- إعدادات OCR.Space (مجاني) ---
-const OCR_SPACE_API_KEY = process.env.OCR_SPACE_API_KEY || 'K86742178888957'; // ضع مفتاحك هنا
+const OCR_SPACE_API_KEY = '72d9a2c76e88957'; // ✅ تم إضافة علامات التنصيص
 
 // --- تهيئة Gemini ---
 let genAI;
@@ -45,9 +45,9 @@ async function extractTextFromImage(imageUrl) {
     try {
         const response = await axios.get('https://api.ocr.space/parse/imageurl', {
             params: {
-                apikey: 72d9a2c76e88957,
+                apikey: OCR_SPACE_API_KEY,
                 url: imageUrl,
-                language: 'ara', // Arabic
+                language: 'ara',
                 isOverlayRequired: false,
                 detectOrientation: true,
                 scale: true,
@@ -79,9 +79,7 @@ async function extractTextFromImage(imageUrl) {
     }
 }
 
-// =============================================
-// دالة إرسال رسالة عبر WAPILOT V2
-// =============================================
+// --- دالة إرسال رسالة عبر WAPILOT V2 ---
 async function sendWAPilotMessage(chatId, text) {
     try {
         console.log(`📤 Sending to ${chatId}: ${text.substring(0, 50)}...`);
@@ -106,9 +104,7 @@ async function sendWAPilotMessage(chatId, text) {
     }
 }
 
-// =============================================
-// الدالة الرئيسية لـ Vercel
-// =============================================
+// --- الدالة الرئيسية لـ Vercel ---
 module.exports = async (req, res) => {
     
     const url = req.url || '';
@@ -116,24 +112,19 @@ module.exports = async (req, res) => {
     
     console.log(`📥 ${method} ${url}`);
 
-    // =============================================
     // Webhook Verification (GET)
-    // =============================================
     if (method === 'GET' && url === '/api/webhook') {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         return res.status(200).json({ 
             status: 'active',
             instance_id: INSTANCE_ID,
             gemini: geminiInitialized ? 'ready' : 'not initialized',
-            ocr: 'OCR.Space (Free - 25,000/month)',
-            api: 'WAPILOT V2',
-            timestamp: new Date().toISOString()
+            ocr: 'OCR.Space (Free)',
+            api: 'WAPILOT V2'
         });
     }
 
-    // =============================================
     // الصفحة الرئيسية
-    // =============================================
     if (method === 'GET' && (url === '/' || url === '')) {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         return res.status(200).send(`
@@ -155,26 +146,23 @@ module.exports = async (req, res) => {
                     <p>Webhook URL:</p>
                     <code>${req.headers.host}/api/webhook</code>
                     <div>
-                        <span class="status online">🧠 Gemini: ${geminiInitialized ? '✅ متصل' : '❌ غير متصل'}</span>
-                        <span class="status online">👁️ OCR: OCR.Space (مجاني)</span>
-                        <span class="status online">📱 WAPilot: ✅ جاهز</span>
+                        <span class="status online">🧠 Gemini: ${geminiInitialized ? '✅' : '❌'}</span>
+                        <span class="status online">👁️ OCR: OCR.Space</span>
+                        <span class="status online">📱 WAPilot: ✅</span>
                     </div>
-                    <p style="margin-top: 20px; color: #10b981;">✅ النظام مجاني 100% - 25,000 صورة مجانية شهرياً</p>
+                    <p style="margin-top: 20px; color: #10b981;">✅ مجاني 100% - 25,000 صورة/شهر</p>
                 </div>
             </body>
             </html>
         `);
     }
 
-    // =============================================
     // استقبال رسائل واتساب (POST)
-    // =============================================
     if (method === 'POST' && url === '/api/webhook') {
         const data = req.body;
         
         console.log('📨 Webhook received');
         
-        // استخراج البيانات
         let rawChatId = null;
         let hasMedia = false;
         let mediaUrl = null;
@@ -201,61 +189,38 @@ module.exports = async (req, res) => {
         }
         
         console.log(`📱 From: ${chatId}`);
-        console.log(`🖼️ Has Media: ${hasMedia} | Is Image: ${isImage}`);
         
-        // =============================================
         // معالجة الصورة
-        // =============================================
         if (hasMedia && mediaUrl && isImage) {
-            console.log('🖼️🖼️🖼️ PROCESSING IMAGE 🖼️🖼️🖼️');
+            console.log('🖼️ Processing image...');
             
-            await sendWAPilotMessage(chatId, "⏳ جاري تحليل الصورة واستخراج النص... (OCR.Space)");
+            await sendWAPilotMessage(chatId, "⏳ جاري تحليل الصورة واستخراج النص...");
             
-            // استخراج النص باستخدام OCR.Space (مجاني)
             const extractedText = await extractTextFromImage(mediaUrl);
             
-            console.log('📝 Extracted:', extractedText.substring(0, 150));
+            console.log('📝 Extracted:', extractedText.substring(0, 100));
             
-            // =============================================
-            // Gemini AI Analysis
-            // =============================================
             let aiResponse = "";
             if (extractedText.length > 5 && !extractedText.includes("عذراً") && !extractedText.includes("خطأ")) {
                 if (model) {
                     try {
-                        console.log('🤖 Calling Gemini...');
-                        
-                        const prompt = `أنت مصحح آلي للمناهج الدراسية العربية. النص التالي مستخرج من ورقة إجابة طالب:
-                        
-"${extractedText}"
-
-المطلوب:
-1. صحح الأخطاء الإملائية والنحوية الواضحة.
-2. إذا كان هناك سؤال في النص، أجب عنه بإجابة نموذجية مختصرة.
-3. إذا لم يكن هناك سؤال، قدم ملخصاً بسيطاً للمحتوى.
-4. أجب باللغة العربية الفصحى.`;
-
+                        const prompt = `أنت مصحح آلي. صحح الأخطاء الإملائية وأجب عن أي سؤال:\n\n"${extractedText}"\n\nأجب بالعربية.`;
                         const aiResult = await model.generateContent(prompt);
                         aiResponse = aiResult.response.text();
-                        
                         console.log('🤖 Gemini Success');
                     } catch (aiError) {
-                        console.error('❌ Gemini Error:', aiError.message);
                         aiResponse = "خطأ في تحليل النص.";
                     }
                 } else {
                     aiResponse = "Gemini غير مهيأ.";
                 }
             } else {
-                aiResponse = extractedText.length <= 5 ? 
-                    "النص المستخرج قصير جداً." : 
-                    extractedText;
+                aiResponse = extractedText.length <= 5 ? "النص المستخرج قصير جداً." : extractedText;
             }
             
-            // الرد النهائي
-            let finalMessage = `📝 *النص المستخرج:*\n${extractedText.substring(0, 600)}\n`;
+            let finalMessage = `📝 *النص المستخرج:*\n${extractedText.substring(0, 500)}\n`;
             finalMessage += `━━━━━━━━━━━━━━━\n`;
-            finalMessage += `🤖 *تحليل Gemini:*\n${aiResponse.substring(0, 1000)}`;
+            finalMessage += `🤖 *تحليل Gemini:*\n${aiResponse.substring(0, 800)}`;
             
             await sendWAPilotMessage(chatId, finalMessage);
             console.log('✅ Response sent!');
@@ -263,20 +228,10 @@ module.exports = async (req, res) => {
             return res.status(200).json({ success: true });
         }
         
-        // =============================================
         // رسالة نصية
-        // =============================================
-        console.log('💬 Text message');
-        
         await sendWAPilotMessage(
             chatId,
-            "📸 *مرحباً بك في بوت تصحيح الأوراق!*\n\n" +
-            "من فضلك أرسل صورة واضحة لورقة الإجابة.\n\n" +
-            "سأقوم بـ:\n" +
-            "✅ استخراج النص من الصورة (OCR.Space - مجاني)\n" +
-            "✅ تصحيح الأخطاء الإملائية\n" +
-            "✅ الإجابة عن الأسئلة\n\n" +
-            "*تأكد من أن الصورة واضحة ومضاءة جيداً.*"
+            "📸 *مرحباً بك في بوت تصحيح الأوراق!*\n\nمن فضلك أرسل صورة واضحة لورقة الإجابة."
         );
         
         return res.status(200).json({ success: true });
