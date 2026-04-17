@@ -12,7 +12,7 @@ const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
 // --- إعدادات Google Gemini ---
 const GEMINI_API_KEY = process.env.Gemini_API_Key || process.env.GEMINI_API_KEY || '';
 
-// --- إعدادات OCR.Space (مجاني) ---
+// --- إعدادات OCR.Space ---
 const OCR_SPACE_API_KEY = '72d9a2c76e88957';
 
 // --- تهيئة Gemini ---
@@ -38,7 +38,7 @@ if (GEMINI_API_KEY) {
     }
 }
 
-// --- دالة OCR باستخدام OCR.Space ---
+// --- دالة OCR ---
 async function extractTextFromImage(imageUrl) {
     console.log('👁️ Starting OCR.Space...');
     
@@ -47,7 +47,7 @@ async function extractTextFromImage(imageUrl) {
             params: {
                 apikey: OCR_SPACE_API_KEY,
                 url: imageUrl,
-                language: 'arabic',     // ✅ تم التصحيح
+                language: '',
                 filetype: 'JPG',
                 isOverlayRequired: false,
                 detectOrientation: true,
@@ -58,25 +58,25 @@ async function extractTextFromImage(imageUrl) {
         });
         
         const data = response.data;
+        console.log('📦 OCR Response:', JSON.stringify(data).substring(0, 300));
         
         if (data.IsErroredOnProcessing) {
             console.error('❌ OCR Error:', data.ErrorMessage);
-            return "خطأ في استخراج النص: " + JSON.stringify(data.ErrorMessage).substring(0, 100);
+            return "خطأ في استخراج النص";
         }
         
         const parsedText = data.ParsedResults?.[0]?.ParsedText || '';
         
         if (parsedText) {
-            console.log('✅ OCR.Space completed');
-            console.log('📝 Characters:', parsedText.length);
+            console.log('✅ OCR completed:', parsedText.length, 'chars');
             return parsedText.trim();
         } else {
-            return "عذراً، لم يتم التعرف على أي نص في الصورة.";
+            return "عذراً، لم يتم التعرف على نص.";
         }
         
     } catch (error) {
-        console.error('❌ OCR.Space Error:', error.message);
-        return "خطأ في استخراج النص من الصورة.";
+        console.error('❌ OCR Error:', error.message);
+        return "خطأ في استخراج النص.";
     }
 }
 
@@ -85,7 +85,7 @@ async function sendWAPilotMessage(chatId, text) {
     try {
         console.log(`📤 Sending to ${chatId}: ${text.substring(0, 50)}...`);
         
-        const response = await axios.post(
+        await axios.post(
             `${WAPILOT_API_URL}/${INSTANCE_ID}/send-message`,
             { chat_id: chatId, text: text },
             { 
@@ -113,31 +113,25 @@ module.exports = async (req, res) => {
     
     console.log(`📥 ${method} ${url}`);
 
-    // Webhook Verification
     if (method === 'GET' && url === '/api/webhook') {
-        res.setHeader('Content-Type', 'application/json; charset=utf-8');
         return res.status(200).json({ 
             status: 'active',
-            instance_id: INSTANCE_ID,
-            gemini: geminiInitialized ? 'ready' : 'not initialized',
-            ocr: 'OCR.Space (Free)'
+            gemini: geminiInitialized ? 'ready' : 'no',
+            ocr: 'OCR.Space'
         });
     }
 
-    // الصفحة الرئيسية
     if (method === 'GET' && (url === '/' || url === '')) {
-        res.setHeader('Content-Type', 'text/html; charset=utf-8');
         return res.status(200).send(`
             <!DOCTYPE html>
             <html dir="rtl">
             <head>
                 <title>بوت تصحيح الأوراق</title>
                 <style>
-                    body { font-family: Arial; text-align: center; padding: 50px; background: linear-gradient(135deg, #1a1a2e, #16213e); color: white; }
+                    body { font-family: Arial; text-align: center; padding: 50px; background: #1a1a2e; color: white; }
                     .container { background: white; border-radius: 20px; padding: 40px; max-width: 500px; margin: 0 auto; color: #333; }
-                    .status { display: inline-block; padding: 8px 20px; border-radius: 50px; margin: 5px; }
-                    .online { background: #10b981; color: white; }
-                    code { background: #1a1a2e; color: #10b981; padding: 15px; border-radius: 8px; display: block; margin: 20px 0; direction: ltr; }
+                    .status { display: inline-block; padding: 8px 20px; border-radius: 50px; margin: 5px; background: #10b981; color: white; }
+                    code { background: #1a1a2e; color: #10b981; padding: 15px; border-radius: 8px; display: block; margin: 20px 0; }
                 </style>
             </head>
             <body>
@@ -146,95 +140,64 @@ module.exports = async (req, res) => {
                     <p>Webhook URL:</p>
                     <code>${req.headers.host}/api/webhook</code>
                     <div>
-                        <span class="status online">🧠 Gemini: ${geminiInitialized ? '✅' : '❌'}</span>
-                        <span class="status online">👁️ OCR: OCR.Space</span>
-                        <span class="status online">📱 WAPilot: ✅</span>
+                        <span class="status">🧠 Gemini: ${geminiInitialized ? '✅' : '❌'}</span>
+                        <span class="status">👁️ OCR: OCR.Space</span>
+                        <span class="status">📱 WAPilot: ✅</span>
                     </div>
-                    <p style="margin-top: 20px; color: #10b981;">✅ مجاني 100% - 25,000 صورة/شهر</p>
+                    <p style="margin-top: 20px; color: #10b981;">✅ مجاني 100%</p>
                 </div>
             </body>
             </html>
         `);
     }
 
-    // استقبال رسائل واتساب
     if (method === 'POST' && url === '/api/webhook') {
         const data = req.body;
         
-        console.log('📨 Webhook received');
-        
         let rawChatId = null;
-        let hasMedia = false;
         let mediaUrl = null;
-        let isImage = false;
         
         if (data.payload) {
             rawChatId = data.payload.from || data.payload.chatId;
-            hasMedia = data.payload.hasMedia || false;
-            isImage = data.payload.mediaType === 'image';
-            
-            if (data.payload.media?.url) {
+            if (data.payload.media?.url && data.payload.mediaType === 'image') {
                 mediaUrl = data.payload.media.url;
-                console.log('✅ Found direct media URL');
             }
         }
         
-        if (!rawChatId) {
-            return res.status(200).json({ success: false });
-        }
+        if (!rawChatId) return res.status(200).json({ ok: false });
         
-        let chatId = rawChatId;
-        if (!chatId.includes('@')) {
-            chatId = `${chatId}@c.us`;
-        }
+        let chatId = rawChatId.includes('@') ? rawChatId : `${rawChatId}@c.us`;
         
-        console.log(`📱 From: ${chatId}`);
-        
-        // معالجة الصورة
-        if (hasMedia && mediaUrl && isImage) {
+        if (mediaUrl) {
             console.log('🖼️ Processing image...');
-            
-            await sendWAPilotMessage(chatId, "⏳ جاري تحليل الصورة واستخراج النص...");
+            await sendWAPilotMessage(chatId, "⏳ جاري تحليل الصورة...");
             
             const extractedText = await extractTextFromImage(mediaUrl);
             
-            console.log('📝 Extracted:', extractedText.substring(0, 100));
-            
             let aiResponse = "";
-            if (extractedText.length > 5 && !extractedText.includes("عذراً") && !extractedText.includes("خطأ")) {
+            if (extractedText.length > 5 && !extractedText.includes("خطأ")) {
                 if (model) {
                     try {
-                        const prompt = `أنت مصحح آلي. صحح الأخطاء الإملائية وأجب عن أي سؤال:\n\n"${extractedText}"\n\nأجب بالعربية.`;
+                        const prompt = `صحح الأخطاء الإملائية وأجب عن أي سؤال:\n\n"${extractedText}"\n\nأجب بالعربية.`;
                         const aiResult = await model.generateContent(prompt);
                         aiResponse = aiResult.response.text();
-                        console.log('🤖 Gemini Success');
-                    } catch (aiError) {
-                        aiResponse = "خطأ في تحليل النص.";
+                    } catch (e) {
+                        aiResponse = "خطأ في التحليل.";
                     }
                 } else {
                     aiResponse = "Gemini غير مهيأ.";
                 }
             } else {
-                aiResponse = extractedText.length <= 5 ? "النص المستخرج قصير جداً." : extractedText;
+                aiResponse = extractedText;
             }
             
-            let finalMessage = `📝 *النص المستخرج:*\n${extractedText.substring(0, 500)}\n`;
-            finalMessage += `━━━━━━━━━━━━━━━\n`;
-            finalMessage += `🤖 *تحليل Gemini:*\n${aiResponse.substring(0, 800)}`;
-            
+            const finalMessage = `📝 *النص:*\n${extractedText.substring(0, 500)}\n━━━━━━━━\n🤖 *التحليل:*\n${aiResponse.substring(0, 800)}`;
             await sendWAPilotMessage(chatId, finalMessage);
-            console.log('✅ Response sent!');
-            
-            return res.status(200).json({ success: true });
+        } else {
+            await sendWAPilotMessage(chatId, "📸 أرسل صورة ورقة الإجابة");
         }
         
-        // رسالة نصية
-        await sendWAPilotMessage(
-            chatId,
-            "📸 *مرحباً بك في بوت تصحيح الأوراق!*\n\nمن فضلك أرسل صورة واضحة لورقة الإجابة."
-        );
-        
-        return res.status(200).json({ success: true });
+        return res.status(200).json({ ok: true });
     }
     
     res.status(404).send('Not Found');
