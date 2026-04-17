@@ -3,200 +3,87 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>بوت تصحيح الأوراق - لوحة التحكم</title>
+    <title>بوت تصحيح الأوراق</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Segoe UI', 'Tahoma', 'Arial', sans-serif;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }
-        .container {
-            max-width: 600px;
-            width: 100%;
-            background: rgba(255, 255, 255, 0.95);
-            border-radius: 24px;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-            padding: 40px;
-            text-align: center;
-        }
-        h1 {
-            color: #1a1a2e;
-            font-size: 2rem;
-            margin-bottom: 10px;
-        }
-        .status-badge {
-            display: inline-block;
-            padding: 8px 20px;
-            border-radius: 50px;
-            font-weight: bold;
-            margin: 10px 5px;
-        }
+        body { font-family: Arial; background: linear-gradient(135deg, #1a1a2e, #16213e); min-height: 100vh; display: flex; align-items: center; justify-content: center; margin: 0; padding: 20px; }
+        .container { max-width: 500px; background: white; border-radius: 24px; padding: 40px; text-align: center; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); }
+        h1 { color: #1a1a2e; }
+        .badge { display: inline-block; padding: 8px 20px; border-radius: 50px; margin: 5px; font-weight: bold; }
         .online { background: #10b981; color: white; }
         .offline { background: #ef4444; color: white; }
-        .webhook-box {
-            background: #1a1a2e;
-            color: #10b981;
-            padding: 15px;
-            border-radius: 12px;
-            font-family: monospace;
-            margin: 20px 0;
-            word-break: break-all;
-            text-align: left;
-            direction: ltr;
-        }
-        .info-card {
-            background: #f1f5f9;
-            border-radius: 16px;
-            padding: 20px;
-            margin: 20px 0;
-        }
-        .btn {
-            background: #667eea;
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 50px;
-            font-size: 1rem;
-            font-weight: bold;
-            cursor: pointer;
-            margin: 5px;
-        }
-        .btn:hover { background: #5a67d8; }
-        .log-box {
-            background: #0f172a;
-            color: #94a3b8;
-            padding: 15px;
-            border-radius: 12px;
-            font-family: monospace;
-            font-size: 0.8rem;
-            text-align: left;
-            direction: ltr;
-            max-height: 200px;
-            overflow-y: auto;
-            margin-top: 20px;
-        }
+        .webhook { background: #1a1a2e; color: #10b981; padding: 15px; border-radius: 12px; font-family: monospace; margin: 20px 0; word-break: break-all; direction: ltr; }
+        .btn { background: #667eea; color: white; border: none; padding: 12px 24px; border-radius: 50px; font-size: 1rem; cursor: pointer; margin: 5px; }
+        .info { background: #f1f5f9; border-radius: 16px; padding: 20px; margin: 20px 0; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🤖 بوت تصحيح الأوراق</h1>
-        <p style="color: #64748b; margin-bottom: 20px;">نظام تحليل وتصحيح أوراق الإجابة</p>
+        <p style="color: #64748b;">جاهز لاستقبال الصور من واتساب</p>
         
-        <!-- حالة الخدمات -->
-        <div class="info-card">
-            <h3 style="margin-bottom: 15px; color: #1e293b;">📊 حالة الخدمات</h3>
-            <div id="status-container">
-                <span id="gemini-badge" class="status-badge offline">🧠 Gemini: فحص...</span>
-                <span id="vision-badge" class="status-badge offline">👁️ Vision: فحص...</span>
-                <span id="wapilot-badge" class="status-badge offline">📱 WAPilot: فحص...</span>
+        <div class="info">
+            <h3>📊 حالة الخدمات</h3>
+            <div id="status">
+                <span id="gemini" class="badge offline">🧠 فحص...</span>
+                <span id="vision" class="badge offline">👁️ فحص...</span>
+                <span id="wapilot" class="badge online">📱 جاهز</span>
             </div>
-            <p id="status-message" style="margin-top: 15px; color: #64748b;"></p>
+            <p id="msg" style="margin-top: 15px;"></p>
         </div>
         
-        <!-- رابط Webhook -->
-        <div class="info-card">
-            <h3 style="margin-bottom: 10px; color: #1e293b;">🔗 رابط Webhook</h3>
-            <div class="webhook-box" id="webhook-url">جاري التحميل...</div>
-            <button class="btn" onclick="copyWebhook()">📋 نسخ الرابط</button>
+        <div class="info">
+            <h3>🔗 رابط Webhook</h3>
+            <div class="webhook" id="url">جاري التحميل...</div>
+            <button class="btn" onclick="copyUrl()">📋 نسخ</button>
         </div>
         
-        <!-- أزرار التحكم -->
-        <div>
-            <button class="btn" onclick="checkStatus()">🔄 تحديث الحالة</button>
-            <button class="btn" onclick="window.open(webhookUrl, '_blank')">🔗 فتح Webhook</button>
-        </div>
-        
-        <!-- معلومات سريعة -->
-        <div style="margin-top: 20px; color: #94a3b8; font-size: 0.85rem;">
-            Instance: instance3532 | رقم: +20 119 383 101
-        </div>
+        <button class="btn" onclick="check()">🔄 تحديث</button>
+        <p style="margin-top: 20px; color: #94a3b8; font-size: 0.8rem;">Instance: instance3532 | +20 119 383 101</p>
     </div>
-
     <script>
-        const webhookUrl = window.location.origin + '/api/webhook';
-        document.getElementById('webhook-url').textContent = webhookUrl;
+        const webhook = window.location.origin + '/api/webhook';
+        document.getElementById('url').textContent = webhook;
         
-        function copyWebhook() {
-            navigator.clipboard.writeText(webhookUrl).then(() => {
-                alert('✅ تم نسخ رابط Webhook!');
-            }).catch(() => {
-                prompt('انسخ الرابط يدوياً:', webhookUrl);
-            });
+        function copyUrl() {
+            navigator.clipboard.writeText(webhook).then(() => alert('✅ تم النسخ!'));
         }
         
-        async function checkStatus() {
-            // تحديث البادجات
-            document.getElementById('gemini-badge').className = 'status-badge offline';
-            document.getElementById('gemini-badge').textContent = '🧠 Gemini: فحص...';
-            document.getElementById('vision-badge').className = 'status-badge offline';
-            document.getElementById('vision-badge').textContent = '👁️ Vision: فحص...';
-            document.getElementById('wapilot-badge').className = 'status-badge offline';
-            document.getElementById('wapilot-badge').textContent = '📱 WAPilot: فحص...';
+        async function check() {
+            document.getElementById('gemini').className = 'badge offline';
+            document.getElementById('gemini').textContent = '🧠 فحص...';
+            document.getElementById('vision').className = 'badge offline';
+            document.getElementById('vision').textContent = '👁️ فحص...';
             
             try {
-                const response = await fetch(webhookUrl);
-                const text = await response.text();
+                const r = await fetch(webhook);
+                const data = await r.json();
                 
-                // تحليل النص المستلم
-                const geminiReady = text.includes('Gemini: Ready');
-                const visionReady = text.includes('Vision: Ready');
-                const geminiKeyPresent = text.includes('Gemini Key: Present');
-                const visionKeyPresent = text.includes('Vision Key: Present');
+                const gReady = data.gemini === 'ready';
+                const vReady = data.vision === 'ready';
+                const gKey = data.gemini_key === 'present';
+                const vKey = data.vision_key === 'present';
                 
-                // تحديث البادجات
-                if (geminiReady) {
-                    document.getElementById('gemini-badge').className = 'status-badge online';
-                    document.getElementById('gemini-badge').textContent = '🧠 Gemini: ✅ متصل';
-                } else {
-                    document.getElementById('gemini-badge').className = 'status-badge offline';
-                    document.getElementById('gemini-badge').textContent = '🧠 Gemini: ❌ غير مهيأ';
-                }
+                document.getElementById('gemini').className = gReady ? 'badge online' : 'badge offline';
+                document.getElementById('gemini').textContent = gReady ? '🧠 ✅ متصل' : '🧠 ❌ غير متصل';
                 
-                if (visionReady) {
-                    document.getElementById('vision-badge').className = 'status-badge online';
-                    document.getElementById('vision-badge').textContent = '👁️ Vision: ✅ متصل';
-                } else {
-                    document.getElementById('vision-badge').className = 'status-badge offline';
-                    document.getElementById('vision-badge').textContent = '👁️ Vision: ❌ غير مهيأ';
-                }
+                document.getElementById('vision').className = vReady ? 'badge online' : 'badge offline';
+                document.getElementById('vision').textContent = vReady ? '👁️ ✅ متصل' : '👁️ ❌ غير متصل';
                 
-                // WAPilot دايماً جاهز لو البيانات موجودة
-                document.getElementById('wapilot-badge').className = 'status-badge online';
-                document.getElementById('wapilot-badge').textContent = '📱 WAPilot: ✅ جاهز';
+                let msg = '';
+                if (gReady && vReady) msg = '✅ جميع الخدمات تعمل!';
+                else if (gKey && vKey) msg = '⚠️ المفاتيح موجودة لكن الخدمات غير مهيأة';
+                else msg = '❌ تأكد من Environment Variables في Vercel';
                 
-                // رسالة الحالة
-                let statusMsg = '';
-                if (geminiReady && visionReady) {
-                    statusMsg = '✅ جميع الخدمات تعمل بشكل طبيعي. البوت جاهز لاستقبال الصور!';
-                } else if (geminiKeyPresent && visionKeyPresent) {
-                    statusMsg = '⚠️ المفاتيح موجودة لكن الخدمات غير مهيأة بالكامل. راجع اللوج.';
-                } else {
-                    statusMsg = '❌ بعض المفاتيح مفقودة. تأكد من Environment Variables في Vercel.';
-                }
+                if (gKey) msg += ' | 🔑 Gemini ✓';
+                if (vKey) msg += ' | 👁️ Vision ✓';
                 
-                if (geminiKeyPresent) statusMsg += ' 🔑 Gemini Key موجود.';
-                if (visionKeyPresent) statusMsg += ' 👁️ Vision Key موجود.';
-                
-                document.getElementById('status-message').textContent = statusMsg;
-                
-            } catch (error) {
-                document.getElementById('gemini-badge').className = 'status-badge offline';
-                document.getElementById('gemini-badge').textContent = '🧠 Gemini: ❌ خطأ';
-                document.getElementById('vision-badge').className = 'status-badge offline';
-                document.getElementById('vision-badge').textContent = '👁️ Vision: ❌ خطأ';
-                document.getElementById('wapilot-badge').className = 'status-badge offline';
-                document.getElementById('wapilot-badge').textContent = '📱 WAPilot: ❌ خطأ';
-                document.getElementById('status-message').textContent = '❌ خطأ في الاتصال: ' + error.message;
+                document.getElementById('msg').textContent = msg;
+            } catch(e) {
+                document.getElementById('msg').textContent = '❌ خطأ في الاتصال';
             }
         }
         
-        // فحص تلقائي عند التحميل
-        window.onload = checkStatus;
+        window.onload = check;
     </script>
 </body>
 </html>
