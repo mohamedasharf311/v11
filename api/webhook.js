@@ -1,6 +1,5 @@
 // api/webhook.js
 const axios = require('axios');
-const Tesseract = require('tesseract.js');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const fs = require('fs');
 const path = require('path');
@@ -12,6 +11,9 @@ const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
 
 // --- إعدادات Google Gemini ---
 const GEMINI_API_KEY = process.env.Gemini_API_Key || process.env.GEMINI_API_KEY || '';
+
+// --- إعدادات OCR.Space (مجاني) ---
+const OCR_SPACE_API_KEY = process.env.OCR_SPACE_API_KEY || 'K86742178888957'; // ضع مفتاحك هنا
 
 // --- تهيئة Gemini ---
 let genAI;
@@ -36,31 +38,43 @@ if (GEMINI_API_KEY) {
     }
 }
 
-// --- دالة OCR باستخدام Tesseract.js (مجانية 100%) ---
+// --- دالة OCR باستخدام OCR.Space (مجانية 100%) ---
 async function extractTextFromImage(imageUrl) {
-    console.log('👁️ Starting Tesseract OCR...');
+    console.log('👁️ Starting OCR.Space...');
     
     try {
-        const result = await Tesseract.recognize(
-            imageUrl,
-            'ara+eng', // Arabic + English
-            {
-                logger: m => {
-                    if (m.status === 'recognizing text') {
-                        console.log(`📝 OCR Progress: ${Math.round(m.progress * 100)}%`);
-                    }
-                }
-            }
-        );
+        const response = await axios.get('https://api.ocr.space/parse/imageurl', {
+            params: {
+                apikey: OCR_SPACE_API_KEY,
+                url: imageUrl,
+                language: 'ara', // Arabic
+                isOverlayRequired: false,
+                detectOrientation: true,
+                scale: true,
+                OCREngine: 2
+            },
+            timeout: 30000
+        });
         
-        const text = result.data.text.trim();
-        console.log('✅ Tesseract OCR completed');
-        console.log('📝 Characters:', text.length);
+        const data = response.data;
         
-        return text || "عذراً، لم يتم التعرف على أي نص في الصورة.";
+        if (data.IsErroredOnProcessing) {
+            console.error('❌ OCR Error:', data.ErrorMessage);
+            return "خطأ في استخراج النص: " + (data.ErrorMessage || '');
+        }
+        
+        const parsedText = data.ParsedResults?.[0]?.ParsedText || '';
+        
+        if (parsedText) {
+            console.log('✅ OCR.Space completed');
+            console.log('📝 Characters:', parsedText.length);
+            return parsedText.trim();
+        } else {
+            return "عذراً، لم يتم التعرف على أي نص في الصورة.";
+        }
         
     } catch (error) {
-        console.error('❌ Tesseract Error:', error.message);
+        console.error('❌ OCR.Space Error:', error.message);
         return "خطأ في استخراج النص من الصورة.";
     }
 }
@@ -111,7 +125,7 @@ module.exports = async (req, res) => {
             status: 'active',
             instance_id: INSTANCE_ID,
             gemini: geminiInitialized ? 'ready' : 'not initialized',
-            ocr: 'Tesseract.js (Free)',
+            ocr: 'OCR.Space (Free - 25,000/month)',
             api: 'WAPILOT V2',
             timestamp: new Date().toISOString()
         });
@@ -142,10 +156,10 @@ module.exports = async (req, res) => {
                     <code>${req.headers.host}/api/webhook</code>
                     <div>
                         <span class="status online">🧠 Gemini: ${geminiInitialized ? '✅ متصل' : '❌ غير متصل'}</span>
-                        <span class="status online">👁️ OCR: Tesseract.js (مجاني)</span>
+                        <span class="status online">👁️ OCR: OCR.Space (مجاني)</span>
                         <span class="status online">📱 WAPilot: ✅ جاهز</span>
                     </div>
-                    <p style="margin-top: 20px; color: #10b981;">✅ النظام مجاني 100%</p>
+                    <p style="margin-top: 20px; color: #10b981;">✅ النظام مجاني 100% - 25,000 صورة مجانية شهرياً</p>
                 </div>
             </body>
             </html>
@@ -195,9 +209,9 @@ module.exports = async (req, res) => {
         if (hasMedia && mediaUrl && isImage) {
             console.log('🖼️🖼️🖼️ PROCESSING IMAGE 🖼️🖼️🖼️');
             
-            await sendWAPilotMessage(chatId, "⏳ جاري تحليل الصورة واستخراج النص... (Tesseract OCR)");
+            await sendWAPilotMessage(chatId, "⏳ جاري تحليل الصورة واستخراج النص... (OCR.Space)");
             
-            // استخراج النص باستخدام Tesseract (مجاني)
+            // استخراج النص باستخدام OCR.Space (مجاني)
             const extractedText = await extractTextFromImage(mediaUrl);
             
             console.log('📝 Extracted:', extractedText.substring(0, 150));
@@ -259,7 +273,7 @@ module.exports = async (req, res) => {
             "📸 *مرحباً بك في بوت تصحيح الأوراق!*\n\n" +
             "من فضلك أرسل صورة واضحة لورقة الإجابة.\n\n" +
             "سأقوم بـ:\n" +
-            "✅ استخراج النص من الصورة (Tesseract OCR - مجاني)\n" +
+            "✅ استخراج النص من الصورة (OCR.Space - مجاني)\n" +
             "✅ تصحيح الأخطاء الإملائية\n" +
             "✅ الإجابة عن الأسئلة\n\n" +
             "*تأكد من أن الصورة واضحة ومضاءة جيداً.*"
