@@ -45,7 +45,7 @@ async function extractTextFromImage(imageUrl) {
     try {
         const response = await axios.get('https://api.ocr.space/parse/imageurl', {
             params: {
-                apikey: OCR_SPACE_API_KEY,
+                apikey: 72d9a2c76e88957,
                 url: imageUrl,
                 language: 'ara', // Arabic
                 isOverlayRequired: false,
