@@ -5,7 +5,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const fs = require('fs');
 const path = require('path');
 
-// --- إعدادات WAPILOT V2 (زي كود النمر بالظبط) ---
+// --- إعدادات WAPILOT V2 ---
 const INSTANCE_ID = "instance3532";
 const WAPILOT_TOKEN = "yzWzEjmxZpbifuOx6lWafYT3Ng69gaFpJGAdTsVc6N";
 const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
@@ -89,18 +89,16 @@ async function sendWAPilotMessage(chatId, text) {
 }
 
 // =============================================
-// دالة جلب صورة من WAPILOT V2
+// دالة جلب صورة من WAPILOT V2 (للاحتياط فقط)
 // =============================================
 async function getWAPilotMedia(mediaId) {
     console.log(`🖼️ Fetching media ID: ${mediaId}`);
     
-    // قائمة الـ endpoints المحتملة لـ WAPILOT V2
     const endpoints = [
         `${WAPILOT_API_URL}/${INSTANCE_ID}/media/${mediaId}`,
         `${WAPILOT_API_URL}/${INSTANCE_ID}/file/${mediaId}`,
         `${WAPILOT_API_URL}/${INSTANCE_ID}/download/${mediaId}`,
-        `https://api.wapilot.net/api/v1/media/${mediaId}`,
-        `https://api.wapilot.net/api/v2/${INSTANCE_ID}/message/media/${mediaId}`
+        `https://api.wapilot.net/api/v1/media/${mediaId}`
     ];
     
     for (const endpoint of endpoints) {
@@ -112,19 +110,14 @@ async function getWAPilotMedia(mediaId) {
                 timeout: 15000
             });
             
-            console.log(`📦 Response keys:`, Object.keys(response.data));
-            
-            // استخراج الرابط من الصيغ المختلفة
             const imageUrl = response.data.url || 
                             response.data.file_url || 
                             response.data.media_url ||
                             response.data.link ||
-                            response.data.download_url ||
-                            response.data.data?.url ||
                             (typeof response.data === 'string' ? response.data : null);
             
             if (imageUrl && typeof imageUrl === 'string' && imageUrl.startsWith('http')) {
-                console.log(`✅ Media URL found: ${imageUrl.substring(0, 80)}...`);
+                console.log(`✅ Media URL found`);
                 return imageUrl;
             }
             
@@ -178,7 +171,6 @@ module.exports = async (req, res) => {
             console.error('HTML Error:', error);
         }
         
-        // صفحة احتياطية
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         return res.status(200).send(`
             <!DOCTYPE html>
@@ -224,10 +216,11 @@ module.exports = async (req, res) => {
         console.log('📨 FULL BODY:', JSON.stringify(data).substring(0, 1500));
         console.log('📨 ========================================');
         
-        // استخراج البيانات بكل الطرق الممكنة
+        // استخراج البيانات
         let rawChatId = null;
         let message = null;
         let hasMedia = false;
+        let mediaUrl = null;
         let mediaId = null;
         let mediaType = null;
         let isImage = false;
@@ -236,56 +229,33 @@ module.exports = async (req, res) => {
             rawChatId = data.payload.from || data.payload.chatId;
             message = data.payload.body || data.payload.text || data.payload.caption || '';
             
-            // فحص الميديا
             hasMedia = data.payload.hasMedia || false;
+            mediaType = data.payload.mediaType || '';
+            isImage = mediaType === 'image';
             
-            // استخراج mediaId
+            // 🔥 استخراج رابط الصورة المباشر
             if (data.payload.media) {
-                mediaId = data.payload.media.id || data.payload.media;
-                mediaType = data.payload.media.type || data.payload.mediaType;
-                isImage = mediaType === 'image' || data.payload.media.mimeType?.includes('image');
-            } else if (data.payload.mediaId) {
-                mediaId = data.payload.mediaId;
-            } else if (data.payload.image) {
-                mediaId = data.payload.image.id;
-                isImage = true;
-            } else if (data.payload.file) {
-                mediaId = data.payload.file.id;
+                console.log('📦 Media object keys:', Object.keys(data.payload.media));
+                
+                if (data.payload.media.url) {
+                    mediaUrl = data.payload.media.url;
+                    console.log('✅ Found direct media URL!');
+                } else if (data.payload.media.id) {
+                    mediaId = data.payload.media.id;
+                    console.log('📦 Found media ID:', mediaId);
+                }
             }
             
-            // لو فيه mediaType في الـ payload
-            if (data.payload.mediaType) {
-                mediaType = data.payload.mediaType;
-                isImage = data.payload.mediaType === 'image';
-            }
-            
-            // لو الـ message فارغ والـ caption موجود
-            if (!message && data.payload.caption) {
-                message = data.payload.caption;
-            }
+            if (!mediaId && data.payload.mediaId) mediaId = data.payload.mediaId;
         }
         
         // صيغ بديلة
         if (!rawChatId && data.from) rawChatId = data.from;
         if (!rawChatId && data.chatId) rawChatId = data.chatId;
         
-        // فحص إضافي: لو فيه media في الـ root
-        if (!hasMedia && data.media) {
-            hasMedia = true;
-            mediaId = data.media.id || data.media;
-        }
-        
-        // فحص: لو النوع image في الـ root
-        if (!isImage && data.type === 'image') {
-            isImage = true;
-            hasMedia = true;
-            mediaId = data.id || data.mediaId;
-        }
-        
         if (!rawChatId) {
             console.log('⚠️ No chat_id found');
-            console.log('Available keys:', Object.keys(data));
-            return res.status(200).json({ success: false, error: 'No chat_id' });
+            return res.status(200).json({ success: false });
         }
         
         // ضبط صيغة chatId
@@ -296,25 +266,31 @@ module.exports = async (req, res) => {
         
         console.log(`📱 From: ${chatId}`);
         console.log(`💬 Message: ${message || '(empty)'}`);
-        console.log(`🖼️ Has Media: ${hasMedia} | Media ID: ${mediaId} | Type: ${mediaType} | Is Image: ${isImage}`);
+        console.log(`🖼️ Has Media: ${hasMedia} | Media URL: ${mediaUrl ? 'YES ✅' : 'NO'} | Media ID: ${mediaId || 'NO'}`);
         
         // =============================================
         // 🔥 معالجة الصورة
         // =============================================
-        if ((hasMedia || mediaId) && (isImage || mediaType === 'image' || !mediaType)) {
+        if (hasMedia && (mediaUrl || mediaId) && isImage) {
             console.log('🖼️🖼️🖼️ PROCESSING IMAGE 🖼️🖼️🖼️');
             
             await sendWAPilotMessage(chatId, "⏳ جاري تحليل الصورة واستخراج النص...");
             
-            // جلب الصورة
-            const imageUrl = await getWAPilotMedia(mediaId);
+            // استخدام الرابط المباشر أو جلبه
+            let imageUrl = mediaUrl;
             
-            if (!imageUrl) {
-                await sendWAPilotMessage(chatId, "❌ لم أتمكن من تحميل الصورة. جرب صورة أخرى.");
-                return res.status(200).json({ success: false, error: 'Failed to fetch media' });
+            if (!imageUrl && mediaId) {
+                console.log('🔄 Fetching media URL from ID:', mediaId);
+                imageUrl = await getWAPilotMedia(mediaId);
             }
             
-            console.log('🔗 Image URL obtained');
+            if (!imageUrl) {
+                console.error('❌ No image URL available');
+                await sendWAPilotMessage(chatId, "❌ لم أتمكن من تحميل الصورة. جرب صورة أخرى.");
+                return res.status(200).json({ success: false });
+            }
+            
+            console.log('🔗 Image URL:', imageUrl.substring(0, 100) + '...');
             
             // =============================================
             // Google Vision OCR
@@ -339,7 +315,6 @@ module.exports = async (req, res) => {
                 }
             } else {
                 extractedText = "Vision API غير مهيأة.";
-                console.log('⚠️ Vision client not initialized');
             }
             
             // =============================================
@@ -372,13 +347,11 @@ module.exports = async (req, res) => {
                     }
                 } else {
                     aiResponse = "Gemini غير مهيأ.";
-                    console.log('⚠️ Gemini model not initialized');
                 }
             } else {
                 aiResponse = extractedText.length <= 5 ? 
                     "النص المستخرج قصير جداً. تأكد من وضوح الصورة." : 
                     "لم يتم استخراج نص كافٍ للتحليل.";
-                console.log('⚠️ Text too short or error in OCR');
             }
             
             // =============================================
