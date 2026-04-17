@@ -6,12 +6,12 @@ const INSTANCE_ID = "instance3532";
 const WAPILOT_TOKEN = "yzWzEjmxZpbifuOx6lWafYT3Ng69gaFpJGAdTsVc6N";
 const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
 
-const PROJECT_ID = '1088721799548';
+// هتلاقي Project ID في صفحة Google Cloud Console الرئيسية
+const PROJECT_ID = 'gen-lang-client-0175051548'; // ده من الإيميل اللي ظهرلك
 const LOCATION = 'us-central1';
 
 let model = null;
 
-// تهيئة Vertex AI باستخدام Service Account
 if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
     try {
         const credentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS);
@@ -23,9 +23,9 @@ if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
         });
         
         model = vertexAI.preview.getGenerativeModel({ model: 'gemini-1.5-pro' });
-        console.log('✅ Vertex AI Ready with Service Account');
+        console.log('✅ Vertex AI Ready');
     } catch (error) {
-        console.error('❌ Vertex AI Init Error:', error.message);
+        console.error('❌ Init Error:', error.message);
     }
 }
 
