@@ -1,27 +1,9 @@
 {
   "name": "whatsapp-ocr-bot",
   "version": "1.0.0",
-  "description": "بوت واتساب لتحليل وتصحيح أوراق الإجابة باستخدام Google Vision و Gemini AI",
-  "main": "api/webhook.js",
-  "scripts": {
-    "dev": "node api/webhook.js",
-    "start": "node api/webhook.js"
-  },
-  "keywords": [
-    "whatsapp",
-    "ocr",
-    "gemini",
-    "google-vision",
-    "arabic"
-  ],
-  "author": "Mohamed",
-  "license": "MIT",
   "dependencies": {
     "@google-cloud/vision": "^4.3.0",
     "@google/generative-ai": "^0.21.0",
     "axios": "^1.6.0"
-  },
-  "engines": {
-    "node": ">=18.0.0"
   }
 }
