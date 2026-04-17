@@ -18,18 +18,13 @@ const GOOGLE_VISION_API_KEY = process.env.GOOGLE_VISION_API_KEY || '';
 let genAI;
 let model;
 let geminiInitialized = false;
-let geminiError = '';
 
 if (GEMINI_API_KEY) {
     try {
-        console.log('🔑 Initializing Gemini with key length:', GEMINI_API_KEY.length);
-        
         if (GEMINI_API_KEY.startsWith('AQ.')) {
-            console.log('✅ Using Vertex AI configuration');
             genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
             model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
         } else {
-            console.log('✅ Using Google AI Studio configuration');
             genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
             model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
         }
@@ -37,16 +32,12 @@ if (GEMINI_API_KEY) {
         console.log('✅ Gemini Ready');
     } catch (error) {
         console.error('❌ Gemini Error:', error.message);
-        geminiError = error.message;
     }
-} else {
-    console.warn('⚠️ GEMINI_API_KEY not found');
 }
 
 // --- تهيئة Vision Client ---
 let visionClient;
 let visionInitialized = false;
-let visionError = '';
 
 if (GOOGLE_VISION_API_KEY) {
     try {
@@ -55,52 +46,34 @@ if (GOOGLE_VISION_API_KEY) {
         console.log('✅ Vision Ready');
     } catch (error) {
         console.error('❌ Vision Error:', error.message);
-        visionError = error.message;
     }
-} else {
-    console.warn('⚠️ GOOGLE_VISION_API_KEY not found');
 }
 
-// --- دالة إرسال رسالة عبر WAPilot ---
+// --- دالة إرسال رسالة عبر WAPilot (باستخدام الـ API الصحيح) ---
 async function sendWAPilotMessage(to, text) {
     try {
-        console.log(`📤 Sending to ${to}: ${text.substring(0, 50)}...`);
-        const shortText = text.length > 4000 ? text.substring(0, 3990) + "..." : text;
+        // تنظيف الرقم من @lid أو @c.us لو موجود
+        const cleanPhone = to.replace(/@.*$/, '').replace(/\D/g, '');
         
-        const response = await axios.post(`${BASE_URL}/send-message`, {
+        console.log(`📤 Sending to ${cleanPhone}: ${text.substring(0, 50)}...`);
+        
+        // استخدام Send Message API من WAPilot
+        const response = await axios.post(`https://api.wapilot.com/v1/send-message`, {
             instance_id: INSTANCE_ID,
             token: WAPILOT_TOKEN,
-            phone: to,
-            message: shortText
+            phone: cleanPhone,
+            message: text
         });
-        console.log('✅ WAPilot response:', response.data);
+        
+        console.log('✅ Message sent:', response.data);
+        return true;
     } catch (error) {
         console.error("❌ Send Error:", error.response?.data || error.message);
+        return false;
     }
 }
 
-// --- دالة جلب صورة من WAPilot ---
-async function getWAPilotMedia(mediaId) {
-    try {
-        console.log('🖼️ Fetching media:', mediaId);
-        const response = await axios.get(`${BASE_URL}/media`, {
-            params: { 
-                instance_id: INSTANCE_ID, 
-                token: WAPILOT_TOKEN, 
-                media_id: mediaId 
-            }
-        });
-        console.log('✅ Media response:', response.data);
-        return response.data.url || response.data.base64 || response.data.file_url;
-    } catch (error) {
-        console.error('❌ Media Error:', error.response?.data || error.message);
-        return null;
-    }
-}
-
-// =============================================
-// الدالة الرئيسية لـ Vercel
-// =============================================
+// --- دالة Vercel الأساسية ---
 module.exports = async (req, res) => {
     
     const url = req.url || '';
@@ -108,9 +81,7 @@ module.exports = async (req, res) => {
     
     console.log(`📥 ${method} ${url}`);
 
-    // =============================================
-    // الصفحة الرئيسية (Dashboard HTML)
-    // =============================================
+    // الصفحة الرئيسية
     if (method === 'GET' && (url === '/' || url === '')) {
         try {
             const htmlPath = path.join(process.cwd(), 'public', 'index.html');
@@ -119,204 +90,163 @@ module.exports = async (req, res) => {
                 res.status(200).send(fs.readFileSync(htmlPath, 'utf8'));
             } else {
                 res.setHeader('Content-Type', 'text/html; charset=utf-8');
-                res.status(200).send(`
-                    <!DOCTYPE html>
-                    <html dir="rtl">
-                    <head>
-                        <title>بوت تصحيح الأوراق</title>
-                        <style>
-                            body { font-family: Arial; text-align: center; padding: 50px; background: linear-gradient(135deg, #1a1a2e, #16213e); color: white; }
-                            .container { background: white; border-radius: 20px; padding: 40px; max-width: 500px; margin: 0 auto; color: #333; }
-                            .status { display: inline-block; padding: 8px 20px; border-radius: 50px; margin: 5px; }
-                            .online { background: #10b981; color: white; }
-                            .offline { background: #ef4444; color: white; }
-                            code { background: #1a1a2e; color: #10b981; padding: 15px; border-radius: 8px; display: block; margin: 20px 0; direction: ltr; }
-                        </style>
-                    </head>
-                    <body>
-                        <div class="container">
-                            <h1>🤖 بوت تصحيح الأوراق</h1>
-                            <p>Webhook URL:</p>
-                            <code>${req.headers.host}/api/webhook</code>
-                            <div>
-                                <span class="status ${geminiInitialized ? 'online' : 'offline'}">🧠 Gemini: ${geminiInitialized ? 'متصل' : 'غير متصل'}</span>
-                                <span class="status ${visionInitialized ? 'online' : 'offline'}">👁️ Vision: ${visionInitialized ? 'متصل' : 'غير متصل'}</span>
-                                <span class="status online">📱 WAPilot: جاهز</span>
-                            </div>
-                        </div>
-                    </body>
-                    </html>
-                `);
+                res.status(200).send(`<h1>🤖 Bot Running!</h1><p>Webhook: ${req.headers.host}/api/webhook</p>`);
             }
         } catch (error) {
-            console.error('HTML Error:', error);
             res.status(500).send('Error');
         }
         return;
     }
 
-    // =============================================
-    // Webhook Verification (GET)
-    // =============================================
+    // Webhook verification
     if (method === 'GET' && url === '/api/webhook') {
         res.setHeader('Content-Type', 'text/plain; charset=utf-8');
         res.status(200).send(`✅ Bot Ready!\nGemini: ${geminiInitialized ? 'Ready' : 'No'}\nVision: ${visionInitialized ? 'Ready' : 'No'}\nGemini Key: ${GEMINI_API_KEY ? 'Present' : 'Missing'}\nVision Key: ${GOOGLE_VISION_API_KEY ? 'Present' : 'Missing'}`);
         return;
     }
 
-    // =============================================
     // استقبال رسائل واتساب (POST)
-    // =============================================
     if (method === 'POST' && url === '/api/webhook') {
         const { body } = req;
         
-        console.log('📨 ========== WEBHOOK RECEIVED ==========');
-        console.log('📨 FULL BODY:', JSON.stringify(body, null, 2));
-        console.log('📨 ========================================');
+        console.log('📨 Webhook received. Event:', body.event);
         
         try {
+            // --- استخراج البيانات من تنسيق WAPilot الجديد ---
+            // الرقم موجود في: body.payload.from
             let from = null;
-            let messageType = null;
+            let messageType = 'text';
             let mediaId = null;
-            let textContent = null;
+            let textContent = '';
+            let hasMedia = false;
             
-            // محاولة استخراج البيانات بكل الطرق الممكنة
-            if (body.message) {
-                from = body.message.from || body.message.chatId || body.message.sender || body.message.author;
-                messageType = body.message.type;
-                textContent = body.message.text || body.message.body || body.message.content || body.message.caption;
-                if (body.message.media) {
-                    mediaId = body.message.media.id || body.message.media;
-                } else if (body.message.id && messageType === 'image') {
-                    mediaId = body.message.id;
-                } else if (body.message.image?.id) {
-                    mediaId = body.message.image.id;
+            if (body.payload) {
+                // استخراج الرقم (ممكن يكون بصيغة 222956399677568@lid)
+                from = body.payload.from || body.payload.chatId;
+                
+                // هل فيه ميديا؟
+                hasMedia = body.payload.hasMedia || false;
+                mediaId = body.payload.media?.id || body.payload.mediaId || body.payload.id;
+                
+                // محتوى الرسالة النصية
+                textContent = body.payload.body || body.payload.text || body.payload.caption || '';
+                
+                // نوع الميديا
+                if (hasMedia) {
+                    messageType = body.payload.mediaType || 'image';
                 }
             }
             
-            // صيغ بديلة
-            if (!from && body.from) from = body.from;
-            if (!from && body.sender) from = body.sender;
-            if (!from && body.chatId) from = body.chatId;
-            if (!from && body.contact?.phone) from = body.contact.phone;
-            if (!messageType && body.type) messageType = body.type;
-            if (!textContent && body.text) textContent = body.text;
-            if (!textContent && body.body) textContent = body.body;
-            if (!textContent && body.content) textContent = body.content;
-            if (!mediaId && body.mediaId) mediaId = body.mediaId;
-            if (!mediaId && body.media?.id) mediaId = body.media.id;
-            if (!mediaId && body.image?.id) mediaId = body.image.id;
-            if (!mediaId && body.file?.id) mediaId = body.file.id;
+            // لو مفيش رقم صريح، نجرب نستخرجه من الـ ID
+            if (!from && body.payload?.id) {
+                from = body.payload.id.split('@')[0];
+            }
             
-            console.log('📱 Extracted:', { from, messageType, mediaId, textContent });
+            console.log('📱 From:', from);
+            console.log('📝 Message:', textContent);
+            console.log('🖼️ Has Media:', hasMedia, '| Media ID:', mediaId);
             
             if (!from) {
-                console.log('⚠️ No sender found in payload');
-                console.log('Available keys:', Object.keys(body));
-                res.status(200).json({ success: false, error: "No sender" });
+                console.log('⚠️ No sender found');
+                res.status(200).json({ success: false });
                 return;
             }
 
-            // معالجة الصورة
-            if (messageType === 'image' || mediaId) {
-                console.log('🖼️ Processing image, mediaId:', mediaId);
+            // --- معالجة الصورة (لو فيه ميديا) ---
+            if (hasMedia && mediaId) {
+                console.log('🖼️ Processing image...');
                 
                 await sendWAPilotMessage(from, "⏳ جاري تحليل الصورة واستخراج النص...");
-                
-                const imageUrl = await getWAPilotMedia(mediaId);
-                console.log('🔗 Image URL:', imageUrl ? 'Got it' : 'Failed to get URL');
+
+                // جلب رابط الصورة من WAPilot
+                let imageUrl = null;
+                try {
+                    const mediaResponse = await axios.get(`https://api.wapilot.com/v1/media`, {
+                        params: {
+                            instance_id: INSTANCE_ID,
+                            token: WAPILOT_TOKEN,
+                            media_id: mediaId
+                        }
+                    });
+                    
+                    imageUrl = mediaResponse.data.url || mediaResponse.data.file_url;
+                    console.log('🔗 Image URL:', imageUrl ? 'Got it' : 'Not found');
+                } catch (mediaError) {
+                    console.error('❌ Media fetch error:', mediaError.message);
+                }
                 
                 if (!imageUrl) {
-                    await sendWAPilotMessage(from, "❌ لم أتمكن من تحميل الصورة. تأكد من إرسال صورة صالحة.");
+                    await sendWAPilotMessage(from, "❌ لم أتمكن من تحميل الصورة.");
                     res.status(200).json({ success: false });
                     return;
                 }
 
-                // OCR
+                // --- Google Vision OCR ---
                 let extractedText = "";
                 if (visionClient) {
                     try {
-                        console.log('👁️ Calling Vision OCR...');
                         const [result] = await visionClient.textDetection(imageUrl);
                         if (result.textAnnotations?.length > 0) {
                             extractedText = result.textAnnotations[0].description;
-                            console.log('📝 OCR Success:', extractedText.length, 'characters');
-                            console.log('📝 Preview:', extractedText.substring(0, 100));
+                            console.log('📝 OCR:', extractedText.substring(0, 100) + '...');
                         } else {
-                            extractedText = "عذراً، لم يتم التعرف على أي نص في الصورة.";
-                            console.log('📝 OCR: No text found');
+                            extractedText = "عذراً، لم يتم التعرف على نص.";
                         }
-                    } catch (e) {
-                        console.error('❌ OCR Error:', e.message);
+                    } catch (ocrError) {
+                        console.error('❌ OCR Error:', ocrError.message);
                         extractedText = "خطأ في استخراج النص.";
                     }
                 } else {
                     extractedText = "Vision API غير مهيأة.";
-                    console.log('⚠️ Vision client not initialized');
                 }
 
-                // Gemini
+                // --- Gemini AI ---
                 let aiResponse = "";
                 if (extractedText.length > 5 && !extractedText.includes("عذراً") && !extractedText.includes("خطأ")) {
                     if (model) {
                         try {
-                            console.log('🤖 Calling Gemini...');
-                            const prompt = `أنت مصحح آلي. النص التالي مستخرج من ورقة إجابة:
-                            
-"${extractedText}"
-
-المطلوب:
-1. صحح الأخطاء الإملائية الواضحة
-2. إذا كان هناك سؤال، أجب عنه بإجابة مختصرة
-3. أجب باللغة العربية`;
-
+                            const prompt = `أنت مصحح آلي. صحح الأخطاء الإملائية في النص التالي وأجب عن أي سؤال:\n\n"${extractedText}"\n\nأجب بالعربية.`;
                             const aiResult = await model.generateContent(prompt);
                             aiResponse = aiResult.response.text();
-                            console.log('🤖 Gemini Success:', aiResponse.length, 'characters');
-                            console.log('🤖 Preview:', aiResponse.substring(0, 100));
-                        } catch (e) {
-                            console.error('❌ Gemini Error:', e.message);
-                            console.error('❌ Full error:', e);
-                            aiResponse = "خطأ في تحليل النص. " + e.message;
+                            console.log('🤖 Gemini:', aiResponse.substring(0, 100) + '...');
+                        } catch (aiError) {
+                            console.error('❌ Gemini Error:', aiError.message);
+                            aiResponse = "خطأ في التحليل.";
                         }
                     } else {
                         aiResponse = "Gemini غير مهيأ.";
-                        console.log('⚠️ Gemini model not initialized');
                     }
                 } else {
-                    aiResponse = extractedText.length <= 5 ? "النص المستخرج قصير جداً." : "لم يتم استخراج نص كافٍ للتحليل.";
-                    console.log('⚠️ Text too short or error in OCR');
+                    aiResponse = "لم يتم استخراج نص كافٍ للتحليل.";
                 }
 
                 // الرد النهائي
-                let finalMessage = `📝 *النص المستخرج:*\n${extractedText.substring(0, 500)}\n`;
-                finalMessage += `━━━━━━━━━━━━━━━\n`;
-                finalMessage += `🤖 *تحليل Gemini:*\n${aiResponse.substring(0, 800)}`;
+                const finalMessage = `📝 *النص المستخرج:*\n${extractedText.substring(0, 500)}\n\n━━━━━━━━━━━━━━━\n\n🤖 *التحليل:*\n${aiResponse.substring(0, 800)}`;
                 
-                console.log('📤 Sending final response...');
                 await sendWAPilotMessage(from, finalMessage);
-                console.log('✅ Response sent!');
                 
             } else {
-                // رسالة نصية
-                console.log('💬 Text message received:', textContent);
+                // --- رسالة نصية عادية ---
+                console.log('💬 Text message:', textContent);
+                
                 await sendWAPilotMessage(
                     from, 
-                    "📸 *مرحباً بك في بوت تصحيح الأوراق!*\n\nمن فضلك أرسل صورة واضحة لورقة الإجابة وسأقوم بـ:\n✅ استخراج النص المكتوب\n✅ تصحيح الأخطاء الإملائية\n✅ الإجابة عن الأسئلة\n\n*تأكد من أن الصورة واضحة ومضاءة جيداً.*"
+                    "📸 *مرحباً بك في بوت تصحيح الأوراق!*\n\n" +
+                    "من فضلك أرسل صورة واضحة لورقة الإجابة.\n\n" +
+                    "سأقوم بـ:\n" +
+                    "✅ استخراج النص من الصورة\n" +
+                    "✅ تصحيح الأخطاء الإملائية\n" +
+                    "✅ الإجابة عن الأسئلة"
                 );
             }
 
         } catch (error) {
-            console.error("❌ GENERAL ERROR:", error.message);
-            console.error("❌ STACK:", error.stack);
+            console.error("❌ General Error:", error.message);
         }
 
         res.status(200).json({ success: true });
         return;
     }
 
-    // =============================================
-    // أي طلب تاني - 404
-    // =============================================
     res.status(404).send('Not Found');
 };
