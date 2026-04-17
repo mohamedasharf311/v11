@@ -43,16 +43,19 @@ async function extractTextFromImage(imageUrl) {
     console.log('👁️ Starting OCR.Space...');
     
     try {
-        const response = await axios.get('https://api.ocr.space/parse/imageurl', {
-            params: {
-                apikey: OCR_SPACE_API_KEY,
-                url: imageUrl,
-                language: '',
-                filetype: 'JPG',
-                isOverlayRequired: false,
-                detectOrientation: true,
-                scale: true,
-                OCREngine: 2
+        // 🔥 بدون تحديد language - نستخدم POST بدل GET
+        const formData = new URLSearchParams();
+        formData.append('apikey', OCR_SPACE_API_KEY);
+        formData.append('url', imageUrl);
+        formData.append('filetype', 'JPG');
+        formData.append('isOverlayRequired', 'false');
+        formData.append('detectOrientation', 'true');
+        formData.append('scale', 'true');
+        formData.append('OCREngine', '2');
+        
+        const response = await axios.post('https://api.ocr.space/parse/image', formData, {
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
             },
             timeout: 30000
         });
