@@ -6,8 +6,13 @@ const WAPILOT_TOKEN = "yzWzEjmxZpbifuOx6lWafYT3Ng69gaFpJGAdTsVc6N";
 const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-// ✅ Gemini 2.0 Flash - بيدعم الصور
-const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent";
+
+// قائمة النماذج اللي ممكن تشتغل
+const MODELS = [
+    "gemini-pro-vision",
+    "gemini-1.0-pro-vision",
+    "gemini-1.5-flash"
+];
 
 async function imageUrlToBase64(url) {
     try {
@@ -20,44 +25,45 @@ async function imageUrlToBase64(url) {
     }
 }
 
-async function analyzeImageWithGemini(imageBase64, mimeType) {
-    try {
-        const requestBody = {
-            contents: [{
-                parts: [
-                    { 
-                        text: `أنت مصحح آلي للمناهج الدراسية العربية. الصورة المرفقة هي ورقة إجابة طالب مكتوبة بخط اليد باللغة العربية.
+async function tryModel(modelName, imageBase64, mimeType) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${GEMINI_API_KEY}`;
+    
+    const requestBody = {
+        contents: [{
+            parts: [
+                { text: "استخرج النص العربي من الصورة، صحح الأخطاء، وأجب عن أي سؤال. أجب بالعربية." },
+                { inline_data: { mime_type: mimeType, data: imageBase64 } }
+            ]
+        }]
+    };
+    
+    const response = await axios.post(url, requestBody, {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 30000
+    });
+    
+    return response.data;
+}
 
-المطلوب:
-1. استخرج كل النص المكتوب في الصورة.
-2. صحح الأخطاء الإملائية والنحوية الواضحة.
-3. إذا كان هناك سؤال في النص، أجب عنه بإجابة نموذجية مختصرة.
-4. أجب باللغة العربية الفصحى.`
-                    },
-                    { 
-                        inline_data: { 
-                            mime_type: mimeType, 
-                            data: imageBase64 
-                        } 
-                    }
-                ]
-            }]
-        };
-        
-        const response = await axios.post(
-            `${GEMINI_API_URL}?key=${GEMINI_API_KEY}`,
-            requestBody,
-            { headers: { 'Content-Type': 'application/json' }, timeout: 30000 }
-        );
-        
-        const result = response.data;
-        if (result.candidates?.[0]?.content?.parts?.[0]?.text) {
-            return result.candidates[0].content.parts[0].text;
+async function analyzeImageWithGemini(imageBase64, mimeType) {
+    let lastError = null;
+    
+    for (const modelName of MODELS) {
+        try {
+            console.log(`🔄 Trying model: ${modelName}`);
+            const result = await tryModel(modelName, imageBase64, mimeType);
+            
+            if (result.candidates?.[0]?.content?.parts?.[0]?.text) {
+                console.log(`✅ Success with ${modelName}`);
+                return result.candidates[0].content.parts[0].text;
+            }
+        } catch (error) {
+            console.log(`❌ ${modelName} failed:`, error.response?.data?.error?.message || error.message);
+            lastError = error;
         }
-        return "لم يتم الحصول على رد.";
-    } catch (error) {
-        throw new Error('فشل تحليل الصورة: ' + (error.response?.data?.error?.message || error.message));
     }
+    
+    throw new Error('جميع النماذج فشلت: ' + (lastError?.response?.data?.error?.message || lastError?.message));
 }
 
 async function sendWAPilotMessage(chatId, text) {
@@ -78,7 +84,7 @@ module.exports = async (req, res) => {
     const method = req.method || 'GET';
     
     if (method === 'GET') {
-        return res.status(200).json({ status: 'active', model: 'gemini-2.0-flash-exp' });
+        return res.status(200).json({ status: 'active' });
     }
 
     if (method === 'POST' && url === '/api/webhook') {
@@ -106,7 +112,7 @@ module.exports = async (req, res) => {
             
             try {
                 const analysis = await analyzeImageWithGemini(imageData.base64, imageData.mimeType);
-                await sendWAPilotMessage(chatId, `🤖 *تحليل Gemini 2.0:*\n\n${analysis}`);
+                await sendWAPilotMessage(chatId, `🤖 *تحليل Gemini:*\n\n${analysis}`);
             } catch (error) {
                 await sendWAPilotMessage(chatId, `❌ ${error.message}`);
             }
