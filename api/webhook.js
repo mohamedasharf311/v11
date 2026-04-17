@@ -17,6 +17,7 @@ const GOOGLE_VISION_API_KEY = process.env.GOOGLE_VISION_API_KEY;
 // --- تهيئة Gemini ---
 let genAI;
 let model;
+let geminiInitialized = false;
 
 if (GEMINI_API_KEY) {
     try {
@@ -25,23 +26,33 @@ if (GEMINI_API_KEY) {
             genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
             model = genAI.getGenerativeModel({ 
                 model: "gemini-1.5-flash"
-            }, {
-                apiVersion: "v1beta"
             });
         } else {
             console.log('✅ Using Google AI Studio configuration');
             genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
             model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
         }
+        geminiInitialized = true;
     } catch (error) {
         console.error('❌ Error initializing Gemini:', error.message);
     }
 }
 
 // --- تهيئة Vision Client ---
-const visionClient = new vision.ImageAnnotatorClient({
-    apiKey: GOOGLE_VISION_API_KEY
-});
+let visionClient;
+let visionInitialized = false;
+
+if (GOOGLE_VISION_API_KEY) {
+    try {
+        visionClient = new vision.ImageAnnotatorClient({
+            apiKey: GOOGLE_VISION_API_KEY
+        });
+        visionInitialized = true;
+        console.log('✅ Vision client initialized');
+    } catch (error) {
+        console.error('❌ Error initializing Vision:', error.message);
+    }
+}
 
 // --- دالة إرسال رسالة عبر WAPilot ---
 async function sendWAPilotMessage(to, text) {
@@ -77,71 +88,100 @@ async function getWAPilotMedia(mediaId) {
     }
 }
 
-// --- دالة Vercel الأساسية ---
+// =============================================
+// الدالة الرئيسية لـ Vercel
+// =============================================
 module.exports = async (req, res) => {
     
     const url = req.url || '';
+    const method = req.method || 'GET';
+    
+    console.log(`📥 ${method} ${url}`);
 
     // =============================================
-    // نقطة API: عرض صفحة الـ Dashboard
+    // 1️⃣ الصفحة الرئيسية (Dashboard HTML)
     // =============================================
-    if (req.method === 'GET' && (url === '/' || url === '/index.html' || url === '')) {
+    if (method === 'GET' && (url === '/' || url === '')) {
         try {
             const htmlPath = path.join(process.cwd(), 'public', 'index.html');
-            const html = fs.readFileSync(htmlPath, 'utf8');
-            res.setHeader('Content-Type', 'text/html; charset=utf-8');
-            res.status(200).send(html);
+            if (fs.existsSync(htmlPath)) {
+                const html = fs.readFileSync(htmlPath, 'utf8');
+                res.setHeader('Content-Type', 'text/html; charset=utf-8');
+                res.status(200).send(html);
+            } else {
+                // صفحة احتياطية لو الملف مش موجود
+                res.setHeader('Content-Type', 'text/html; charset=utf-8');
+                res.status(200).send(`
+                    <!DOCTYPE html>
+                    <html dir="rtl">
+                    <head>
+                        <title>بوت تصحيح الأوراق</title>
+                        <style>
+                            body { font-family: Arial; text-align: center; padding: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+                            .container { background: rgba(255,255,255,0.95); border-radius: 20px; padding: 40px; max-width: 600px; margin: 0 auto; color: #333; }
+                            code { background: #1a1a2e; color: #00ff88; padding: 10px; border-radius: 8px; display: block; margin: 20px 0; }
+                            .status { display: inline-block; padding: 5px 15px; border-radius: 50px; margin: 5px; }
+                            .online { background: #d4edda; color: #155724; }
+                            .offline { background: #f8d7da; color: #721c24; }
+                        </style>
+                    </head>
+                    <body>
+                        <div class="container">
+                            <h1>🤖 بوت تصحيح الأوراق يعمل!</h1>
+                            <p>Webhook URL:</p>
+                            <code>${req.headers.host}/api/webhook</code>
+                            <p>حالة الخدمات:</p>
+                            <div>
+                                <span class="status ${geminiInitialized ? 'online' : 'offline'}">🧠 Gemini: ${geminiInitialized ? 'متصل' : 'غير متصل'}</span>
+                                <span class="status ${visionInitialized ? 'online' : 'offline'}">👁️ Vision: ${visionInitialized ? 'متصل' : 'غير متصل'}</span>
+                                <span class="status ${INSTANCE_ID ? 'online' : 'offline'}">📱 WAPilot: ${INSTANCE_ID ? 'متصل' : 'غير متصل'}</span>
+                            </div>
+                            <p style="margin-top: 20px;">⬆️ استخدم الرابط أعلاه في إعدادات WAPilot</p>
+                        </div>
+                    </body>
+                    </html>
+                `);
+            }
         } catch (error) {
-            res.status(200).send(`
-                <!DOCTYPE html>
-                <html dir="rtl">
-                <head>
-                    <title>بوت تصحيح الأوراق</title>
-                    <style>
-                        body { font-family: Arial; text-align: center; padding: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
-                        .container { background: rgba(255,255,255,0.95); border-radius: 20px; padding: 40px; max-width: 600px; margin: 0 auto; color: #333; }
-                        code { background: #1a1a2e; color: #00ff88; padding: 10px; border-radius: 8px; display: block; margin: 20px 0; }
-                        a { color: #667eea; }
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <h1>🤖 بوت تصحيح الأوراق يعمل!</h1>
-                        <p>Webhook URL:</p>
-                        <code>${req.headers.host}/api/webhook</code>
-                        <p>⬆️ استخدم هذا الرابط في إعدادات WAPilot</p>
-                        <p><a href="/api/check-gemini">فحص Gemini</a> | <a href="/api/check-vision">فحص Vision</a></p>
-                    </div>
-                </body>
-                </html>
-            `);
+            console.error('Error serving HTML:', error);
+            res.status(500).send('Error loading page');
         }
         return;
     }
 
     // =============================================
-    // نقطة API: فحص Gemini
+    // 2️⃣ نقطة API: فحص Gemini
     // =============================================
-    if (req.method === 'GET' && url === '/api/check-gemini') {
+    if (method === 'GET' && url === '/api/check-gemini') {
+        res.setHeader('Content-Type', 'application/json');
+        
         try {
             if (!GEMINI_API_KEY) {
-                throw new Error('Gemini API Key not configured');
+                return res.status(200).json({ 
+                    status: 'error', 
+                    message: 'Gemini API Key غير موجود' 
+                });
             }
             
             if (!model) {
-                throw new Error('Gemini model not initialized');
+                return res.status(200).json({ 
+                    status: 'error', 
+                    message: 'لم يتم تهيئة نموذج Gemini' 
+                });
             }
             
-            const testResult = await model.generateContent('Say "OK" in Arabic');
+            // اختبار سريع
+            const testResult = await model.generateContent('قل "تمام" بالعربية');
             const response = testResult.response.text();
             
             res.status(200).json({ 
                 status: 'ok', 
                 model: 'Gemini 1.5 Flash',
-                response: response.substring(0, 20)
+                response: response.substring(0, 30)
             });
         } catch (error) {
-            res.status(500).json({ 
+            console.error('Gemini check error:', error.message);
+            res.status(200).json({ 
                 status: 'error', 
                 message: error.message 
             });
@@ -150,20 +190,34 @@ module.exports = async (req, res) => {
     }
 
     // =============================================
-    // نقطة API: فحص Google Vision
+    // 3️⃣ نقطة API: فحص Google Vision
     // =============================================
-    if (req.method === 'GET' && url === '/api/check-vision') {
+    if (method === 'GET' && url === '/api/check-vision') {
+        res.setHeader('Content-Type', 'application/json');
+        
         try {
             if (!GOOGLE_VISION_API_KEY) {
-                throw new Error('Vision API Key not configured');
+                return res.status(200).json({ 
+                    status: 'error', 
+                    message: 'Vision API Key غير موجود' 
+                });
+            }
+            
+            if (!visionClient) {
+                return res.status(200).json({ 
+                    status: 'error', 
+                    message: 'لم يتم تهيئة Vision Client' 
+                });
             }
             
             res.status(200).json({ 
                 status: 'ok', 
-                api: 'Cloud Vision API'
+                api: 'Cloud Vision API',
+                initialized: true
             });
         } catch (error) {
-            res.status(500).json({ 
+            console.error('Vision check error:', error.message);
+            res.status(200).json({ 
                 status: 'error', 
                 message: error.message 
             });
@@ -172,21 +226,27 @@ module.exports = async (req, res) => {
     }
 
     // =============================================
-    // نقطة API: فحص WAPilot
+    // 4️⃣ نقطة API: فحص WAPilot
     // =============================================
-    if (req.method === 'GET' && url === '/api/check-wapilot') {
+    if (method === 'GET' && url === '/api/check-wapilot') {
+        res.setHeader('Content-Type', 'application/json');
+        
         try {
             if (INSTANCE_ID && WAPILOT_TOKEN) {
                 res.status(200).json({ 
                     status: 'ok', 
                     instance: INSTANCE_ID,
-                    note: 'Credentials configured'
+                    configured: true
                 });
             } else {
-                throw new Error('WAPilot credentials not configured');
+                res.status(200).json({ 
+                    status: 'error', 
+                    message: 'بيانات WAPilot غير مكتملة' 
+                });
             }
         } catch (error) {
-            res.status(500).json({ 
+            console.error('WAPilot check error:', error.message);
+            res.status(200).json({ 
                 status: 'error', 
                 message: error.message 
             });
@@ -195,28 +255,30 @@ module.exports = async (req, res) => {
     }
 
     // =============================================
-    // نقطة API: الـ Webhook الرئيسي لـ WAPilot
+    // 5️⃣ Webhook Verification (GET) - للتحقق من WAPilot
     // =============================================
-    if (req.method === 'GET' && url === '/api/webhook') {
-        res.status(200).send('✅ WAPilot OCR Bot is running!\n\nGemini: ' + (model ? 'Ready' : 'Not initialized'));
+    if (method === 'GET' && url === '/api/webhook') {
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.status(200).send(`✅ WAPilot OCR Bot is running!\n\nGemini: ${geminiInitialized ? 'Ready' : 'Not initialized'}\nVision: ${visionInitialized ? 'Ready' : 'Not initialized'}`);
         return;
     }
-    
-    // استقبال POST من WAPilot
-    if (req.method === 'POST' && url === '/api/webhook') {
+
+    // =============================================
+    // 6️⃣ Webhook الرئيسي (POST) - استقبال رسائل واتساب
+    // =============================================
+    if (method === 'POST' && url === '/api/webhook') {
         const { body } = req;
-        console.log('📨 Incoming webhook:', JSON.stringify(body).substring(0, 500));
+        console.log('📨 Incoming webhook:', JSON.stringify(body).substring(0, 300));
 
         try {
             let from = null;
             let messageType = null;
             let mediaId = null;
-            let textContent = null;
             
+            // استخراج البيانات من الصيغ المختلفة
             if (body.message) {
                 from = body.message.from || body.message.chatId;
                 messageType = body.message.type;
-                textContent = body.message.text || body.message.body;
                 if (body.message.media) {
                     mediaId = body.message.media.id;
                 } else if (body.message.id && messageType === 'image') {
@@ -226,19 +288,19 @@ module.exports = async (req, res) => {
             
             if (!from && body.from) from = body.from;
             if (!messageType && body.type) messageType = body.type;
-            if (!textContent && body.body) textContent = body.body;
             if (!mediaId && body.mediaId) mediaId = body.mediaId;
             if (!mediaId && body.media?.id) mediaId = body.media.id;
             
             if (!from) {
-                console.log('⚠️ No sender found in payload');
+                console.log('⚠️ No sender found');
                 res.status(200).json({ success: false, error: "No sender" });
                 return;
             }
 
             console.log(`📱 From: ${from} | Type: ${messageType}`);
 
-            if (messageType === 'image' || mediaId || (body.message?.media?.type === 'image')) {
+            // معالجة الصورة
+            if (messageType === 'image' || mediaId) {
                 
                 await sendWAPilotMessage(from, "⏳ جاري تحليل الصورة واستخراج النص...");
 
@@ -250,52 +312,54 @@ module.exports = async (req, res) => {
                     return;
                 }
 
+                // OCR
                 let extractedText = "";
-                try {
-                    const [result] = await visionClient.textDetection(imageUrl);
-                    const detections = result.textAnnotations;
-                    
-                    if (detections && detections.length > 0) {
-                        extractedText = detections[0].description;
-                        console.log(`📝 OCR Success: ${extractedText.length} chars`);
-                    } else {
-                        extractedText = "عذراً، لم يتم التعرف على أي نص في الصورة.";
-                    }
-                } catch (ocrError) {
-                    console.error("❌ OCR Error:", ocrError.message);
-                    extractedText = "خطأ في استخراج النص من الصورة.";
-                }
-
-                let aiResponse = "";
-                if (extractedText.length > 5 && !extractedText.includes("عذراً") && !extractedText.includes("خطأ")) {
+                if (visionClient) {
                     try {
-                        if (!model) throw new Error("Gemini not initialized");
-
-                        const prompt = `أنت مصحح آلي للمناهج الدراسية العربية. النص التالي مستخرج من ورقة إجابة طالب:
+                        const [result] = await visionClient.textDetection(imageUrl);
+                        const detections = result.textAnnotations;
                         
-"${extractedText}"
-
-المطلوب:
-1. صحح الأخطاء الإملائية والنحوية الواضحة.
-2. إذا كان هناك سؤال في النص، أجب عنه بإجابة نموذجية مختصرة.
-3. إذا لم يكن هناك سؤال، قدم ملخصاً بسيطاً للمحتوى.
-4. أجب باللغة العربية الفصحى.`;
-
-                        const aiResult = await model.generateContent(prompt);
-                        aiResponse = aiResult.response.text();
-                        console.log(`🤖 Gemini Success`);
-                    } catch (aiError) {
-                        console.error("❌ Gemini Error:", aiError.message);
-                        aiResponse = "خطأ في تحليل النص بالذكاء الاصطناعي.";
+                        if (detections && detections.length > 0) {
+                            extractedText = detections[0].description;
+                        } else {
+                            extractedText = "عذراً، لم يتم التعرف على أي نص.";
+                        }
+                    } catch (ocrError) {
+                        console.error("OCR Error:", ocrError.message);
+                        extractedText = "خطأ في استخراج النص.";
                     }
                 } else {
-                    aiResponse = "لم يتم استخراج نص كافٍ للتحليل.";
+                    extractedText = "Vision API غير مهيأة.";
                 }
 
-                let finalMessage = "";
-                finalMessage += `📝 النص المستخرج:\n${extractedText.substring(0, 800)}\n`;
+                // Gemini
+                let aiResponse = "";
+                if (extractedText.length > 5 && !extractedText.includes("عذراً") && !extractedText.includes("خطأ")) {
+                    if (model) {
+                        try {
+                            const prompt = `أنت مصحح آلي. النص التالي من ورقة إجابة:
+                            
+"${extractedText}"
+
+المطلوب: صحح الأخطاء الإملائية، وأجب عن أي سؤال. أجب بالعربية.`;
+
+                            const aiResult = await model.generateContent(prompt);
+                            aiResponse = aiResult.response.text();
+                        } catch (aiError) {
+                            console.error("Gemini Error:", aiError.message);
+                            aiResponse = "خطأ في التحليل.";
+                        }
+                    } else {
+                        aiResponse = "Gemini غير مهيأ.";
+                    }
+                } else {
+                    aiResponse = "لم يتم استخراج نص كافٍ.";
+                }
+
+                // الرد
+                let finalMessage = `📝 النص المستخرج:\n${extractedText.substring(0, 500)}\n`;
                 finalMessage += `━━━━━━━━━━━━━━━\n`;
-                finalMessage += `🤖 تحليل Gemini:\n${aiResponse.substring(0, 1200)}`;
+                finalMessage += `🤖 تحليل Gemini:\n${aiResponse.substring(0, 800)}`;
                 
                 finalMessage = finalMessage.replace(/[*_~`]/g, '');
                 
@@ -304,7 +368,7 @@ module.exports = async (req, res) => {
             } else {
                 await sendWAPilotMessage(
                     from, 
-                    "📸 *مرحباً بك في بوت تصحيح الأوراق!*\n\nمن فضلك أرسل صورة واضحة لورقة الإجابة وسأقوم بـ:\n✅ استخراج النص المكتوب\n✅ تصحيح الأخطاء الإملائية\n✅ الإجابة عن الأسئلة"
+                    "📸 مرحباً! من فضلك أرسل صورة ورقة الإجابة لتحليلها."
                 );
             }
 
@@ -316,6 +380,8 @@ module.exports = async (req, res) => {
         return;
     }
 
-    // أي طلب تاني
-    res.status(404).send('Not Found');
+    // =============================================
+    // أي طلب تاني - 404
+    // =============================================
+    res.status(404).json({ error: 'Not Found', url: url });
 };
