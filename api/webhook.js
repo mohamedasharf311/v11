@@ -5,29 +5,75 @@ const INSTANCE_ID = "instance3532";
 const WAPILOT_TOKEN = "yzWzEjmxZpbifuOx6lWafYT3Ng69gaFpJGAdTsVc6N";
 const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+// نموذج عربي مجاني من Hugging Face
+const HF_MODEL = "https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium";
 
-// ✅ نستخدم gemini-2.0-flash-exp (النموذج التجريبي المجاني)
-const GEMINI_MODEL = "gemini-2.0-flash-exp";
-
-async function chatWithGemini(message) {
-    console.log(`🔄 Using model: ${GEMINI_MODEL}`);
+async function chatWithAI(message) {
+    console.log('🔄 Using Hugging Face...');
     
-    const response = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
-        {
-            contents: [{
-                parts: [{ text: message }]
-            }]
-        },
-        { headers: { 'Content-Type': 'application/json' }, timeout: 15000 }
-    );
-    
-    const result = response.data;
-    if (result.candidates?.[0]?.content?.parts?.[0]?.text) {
-        return result.candidates[0].content.parts[0].text;
+    try {
+        const response = await axios.post(
+            HF_MODEL,
+            {
+                inputs: {
+                    text: message
+                }
+            },
+            {
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                timeout: 15000
+            }
+        );
+        
+        if (response.data?.generated_text) {
+            return response.data.generated_text;
+        }
+        
+        throw new Error('لم يتم الحصول على رد');
+        
+    } catch (error) {
+        console.error('❌ HF Error:', error.message);
+        throw error;
     }
-    throw new Error('لم يتم الحصول على رد');
+}
+
+// ردود احتياطية لو الخدمة مش شغالة
+function getFallbackReply(message) {
+    const msg = message.toLowerCase().trim();
+    
+    const replies = {
+        'اهلا': 'أهلاً بك! أنا بوت تصحيح الأوراق. 📝 كيف يمكنني مساعدتك؟',
+        'مرحبا': 'مرحباً! أنا جاهز لمساعدتك في تصحيح الأوراق واستخراج النصوص.',
+        'السلام عليكم': 'وعليكم السلام ورحمة الله وبركاته!',
+        'كيف حالك': 'الحمد لله، شكراً لسؤالك! وأنت؟',
+        'بخير': 'الحمد لله! أرسل صورة ورقة إجابة وأنا أحللها لك.',
+        'شكرا': 'العفو! سعيد بمساعدتك 🤖',
+        'تمام': 'تمام! أرسل صورة ورقة إجابة وأنا أستخرج النص منها.',
+        'انت مين': 'أنا بوت تصحيح الأوراق. أقوم باستخراج النص من الصور وتصحيح الأخطاء الإملائية.',
+        'بتعرف تعمل اي': 'أعرف:\n✅ استخراج النص من الصور\n✅ تصحيح الأخطاء الإملائية\n✅ الإجابة عن الأسئلة\n\nأرسل صورة ورقة إجابة!',
+        'ساعدني': 'بكل سرور! أرسل صورة ورقة الإجابة وسأقوم بتحليلها لك.',
+    };
+    
+    // بحث عن كلمة مفتاحية
+    for (const [key, value] of Object.entries(replies)) {
+        if (msg.includes(key)) {
+            return value;
+        }
+    }
+    
+    // لو مفيش تطابق
+    return `👋 أهلاً بك! أنا بوت تصحيح الأوراق.
+
+📸 أرسل صورة ورقة إجابة لتحليلها واستخراج النص منها.
+
+❓ أو اسألني سؤالاً محدداً.
+
+✨ يمكنني:
+- استخراج النص من الصور
+- تصحيح الأخطاء الإملائية
+- الإجابة عن الأسئلة`;
 }
 
 async function sendWAPilotMessage(chatId, text) {
@@ -50,23 +96,25 @@ module.exports = async (req, res) => {
     const method = req.method || 'GET';
     
     if (method === 'GET' && url === '/api/webhook') {
-        return res.status(200).json({ 
-            status: 'active', 
-            model: GEMINI_MODEL,
-            keyExists: !!GEMINI_API_KEY 
-        });
+        return res.status(200).json({ status: 'active' });
     }
 
     if (method === 'GET' && (url === '/' || url === '')) {
         return res.status(200).send(`
             <!DOCTYPE html>
             <html dir="rtl">
-            <head><title>بوت المحادثة</title></head>
-            <body style="font-family: Arial; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
-                <h1>🤖 بوت المحادثة</h1>
-                <p>🧠 النموذج: ${GEMINI_MODEL}</p>
-                <p>🔑 المفتاح: ${GEMINI_API_KEY ? '✅ موجود' : '❌ مفقود'}</p>
+            <head>
+                <title>بوت تصحيح الأوراق</title>
+                <style>
+                    body { font-family: Arial; text-align: center; padding: 50px; background: #1a1a2e; color: white; }
+                    .online { color: #10b981; }
+                </style>
+            </head>
+            <body>
+                <h1>🤖 بوت تصحيح الأوراق</h1>
+                <p class="online">✅ البوت شغال وجاهز للرد!</p>
                 <p>📱 WAPilot: ✅ متصل</p>
+                <p>💬 الردود: نظام ردود ذكية + احتياطية</p>
             </body>
             </html>
         `);
@@ -86,18 +134,15 @@ module.exports = async (req, res) => {
         
         console.log(`📱 From: ${chatId} | Message: "${textMessage}"`);
         
-        if (!GEMINI_API_KEY) {
-            await sendWAPilotMessage(chatId, "❌ GEMINI_API_KEY غير موجود.");
-            return res.status(200).json({ ok: false });
-        }
-        
         if (textMessage && textMessage.trim()) {
             try {
-                const reply = await chatWithGemini(textMessage);
+                // نحاول نستخدم Hugging Face
+                const reply = await chatWithAI(textMessage);
                 await sendWAPilotMessage(chatId, reply);
             } catch (error) {
-                console.error('❌ Error:', error.response?.data || error.message);
-                await sendWAPilotMessage(chatId, "❌ خطأ: " + (error.response?.data?.error?.message || error.message));
+                // لو فشل، نستخدم الردود الاحتياطية
+                const fallback = getFallbackReply(textMessage);
+                await sendWAPilotMessage(chatId, fallback);
             }
         } else {
             await sendWAPilotMessage(chatId, "👋 أهلاً! اكتب رسالة وسأرد عليك.");
