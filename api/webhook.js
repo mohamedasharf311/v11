@@ -6,12 +6,16 @@ const WAPILOT_TOKEN = "yzWzEjmxZpbifuOx6lWafYT3Ng69gaFpJGAdTsVc6N";
 const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
-
-// ✅ النموذج المجاني للعربي
 const MODEL = 'qwen/qwen2.5-7b-instruct';
 
 async function chatWithQwen(message) {
-    console.log(`🔄 Using model: ${MODEL}`);
+    console.log('🔄 Calling OpenRouter...');
+    console.log('🔑 API Key exists:', !!OPENROUTER_API_KEY);
+    console.log('🔑 API Key prefix:', OPENROUTER_API_KEY.substring(0, 10) + '...');
+    
+    if (!OPENROUTER_API_KEY) {
+        throw new Error('OPENROUTER_API_KEY غير موجود');
+    }
     
     try {
         const response = await axios.post(
@@ -21,13 +25,7 @@ async function chatWithQwen(message) {
                 messages: [
                     {
                         role: "system",
-                        content: `أنت مساعد ذكي اسمه "بوت تصحيح الأوراق" شغال على واتساب.
-اتكلم باللهجة المصرية العامية بشكل طبيعي وبسيط.
-خليك ودود ولطيف.
-لو حد سأل سؤال، جاوبه بشكل مباشر ومختصر.
-لو حد بيهزر، رد بهزار خفيف.
-متستخدمش لغة رسمية أو معقدة.
-تخصصك: تصحيح أوراق الإجابة، استخراج النص من الصور، ومساعدة الطلاب.`
+                        content: `أنت مساعد ذكي اسمه "بوت تصحيح الأوراق". اتكلم باللهجة المصرية العامية. خليك ودود وبسيط.`
                     },
                     {
                         role: "user",
@@ -40,25 +38,32 @@ async function chatWithQwen(message) {
             {
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${OPENROUTER_API_KEY}`
+                    'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+                    'HTTP-Referer': 'https://school-gamma-ten.vercel.app',
+                    'X-Title': 'WhatsApp OCR Bot'
                 },
                 timeout: 20000
             }
         );
         
+        console.log('📦 OpenRouter response status:', response.status);
+        console.log('📦 Response data:', JSON.stringify(response.data).substring(0, 300));
+        
         if (response.data?.choices?.[0]?.message?.content) {
             return response.data.choices[0].message.content;
         }
         
-        throw new Error('لم يتم الحصول على رد');
+        throw new Error('هيكل الرد غير متوقع');
         
     } catch (error) {
-        console.error('❌ OpenRouter Error:', error.response?.data || error.message);
+        console.error('❌ OpenRouter Error Details:');
+        console.error('Status:', error.response?.status);
+        console.error('Data:', error.response?.data);
+        console.error('Message:', error.message);
         throw error;
     }
 }
 
-// رد احتياطي لو OpenRouter مش شغال
 function getFallbackReply(message) {
     const msg = message.toLowerCase().trim();
     
@@ -73,26 +78,25 @@ function getFallbackReply(message) {
             case '+': result = num1 + num2; break;
             case '-': result = num1 - num2; break;
             case '*': result = num1 * num2; break;
-            case '/': result = num2 !== 0 ? (num1 / num2).toFixed(2) : 'مينفعش نقسم على صفر يا باشا'; break;
+            case '/': result = num2 !== 0 ? (num1 / num2).toFixed(2) : 'مينفعش نقسم على صفر'; break;
         }
         return `${num1} ${op} ${num2} = ${result}`;
     }
     
-    // ردود مصرية
     const replies = {
-        'اهلا': 'أهلاً بيك يا باشا! 👋 إزاي أقدر أساعدك؟',
-        'مرحبا': 'مرحباً! نورت والله ✨',
-        'السلام عليكم': 'وعليكم السلام ورحمة الله وبركاته!',
-        'عامل ايه': 'الحمد لله تمام! وإنت عامل إيه؟',
-        'بتعرف تعمل ايه': 'والله يا سيدي أنا بوت تصحيح أوراق. بقرا الصور وبطلع النص منها، وبصحح الأخطاء الإملائية، وبجاوب على الأسئلة. تقدر تبعتلي صورة ورقة إجابة وأنا أحللها لك! 📝',
-        'انت مين': 'أنا بوت تصحيح الأوراق 🤖 شغال على واتساب. بأساعد الطلبة والمدرسين في تصحيح الأوراق واستخراج النصوص.',
+        'اهلا': 'أهلاً بيك يا باشا! 👋',
+        'عامل ايه': 'الحمد لله تمام! وإنت؟',
+        'انت مين': 'أنا بوت تصحيح الأوراق 🤖',
+        'اخبارك': 'كويس الحمد لله! وإنت عامل إيه؟',
+        'اغلى عربيه': 'أغلى عربية في العالم هي Rolls-Royce Boat Tail بـ 28 مليون دولار! 🚗💎',
+        'اسرع عربيه': 'أسرع عربية هي Koenigsegg Jesko Absolut بسرعة 531 كم/ساعة! 🏎️',
     };
     
     for (const [key, value] of Object.entries(replies)) {
         if (msg.includes(key)) return value;
     }
     
-    return `معرفش الصراحة 🤔\nبس تقدر تبعتلي صورة ورقة إجابة وأنا أطلعلك النص منها!\nأو اسألني سؤال تاني.`;
+    return `معرفش الصراحة 🤔\nجرب تسأل سؤال تاني.`;
 }
 
 async function sendWAPilotMessage(chatId, text) {
@@ -102,10 +106,8 @@ async function sendWAPilotMessage(chatId, text) {
             { chat_id: chatId, text: text },
             { headers: { "token": WAPILOT_TOKEN, "Content-Type": "application/json" }, timeout: 10000 }
         );
-        console.log('✅ Message sent');
         return true;
     } catch (error) {
-        console.error('❌ Send Error:', error.message);
         return false;
     }
 }
@@ -116,9 +118,9 @@ module.exports = async (req, res) => {
     
     if (method === 'GET' && url === '/api/webhook') {
         return res.status(200).json({ 
-            status: 'active', 
-            model: MODEL,
-            keyExists: !!OPENROUTER_API_KEY 
+            status: 'active',
+            openrouter: !!OPENROUTER_API_KEY,
+            keyPrefix: OPENROUTER_API_KEY ? OPENROUTER_API_KEY.substring(0, 10) + '...' : 'none'
         });
     }
 
@@ -126,19 +128,11 @@ module.exports = async (req, res) => {
         return res.status(200).send(`
             <!DOCTYPE html>
             <html dir="rtl">
-            <head>
-                <title>بوت Qwen - مصري</title>
-                <style>
-                    body { font-family: Arial; text-align: center; padding: 50px; background: linear-gradient(135deg, #1a1a2e, #16213e); color: white; }
-                    .status { background: #10b981; padding: 8px 20px; border-radius: 50px; display: inline-block; }
-                </style>
-            </head>
-            <body>
-                <h1>🤖 بوت Qwen المصري</h1>
-                <p class="status">✅ شغال وجاهز!</p>
+            <head><title>بوت Qwen</title></head>
+            <body style="font-family: Arial; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
+                <h1>🤖 بوت Qwen</h1>
+                <p>🔑 OpenRouter: ${OPENROUTER_API_KEY ? '✅ موجود' : '❌ مفقود'}</p>
                 <p>🧠 النموذج: ${MODEL}</p>
-                <p>🔑 OpenRouter: ${OPENROUTER_API_KEY ? '✅ متصل' : '❌ محتاج API Key'}</p>
-                <p>💬 بيتكلم: مصري عامي</p>
             </body>
             </html>
         `);
@@ -156,7 +150,7 @@ module.exports = async (req, res) => {
         if (!rawChatId) return res.status(200).json({ ok: false });
         let chatId = rawChatId.includes('@') ? rawChatId : `${rawChatId}@c.us`;
         
-        console.log(`📱 From: ${chatId} | Message: "${textMessage}"`);
+        console.log(`📱 Message: "${textMessage}"`);
         
         if (textMessage && textMessage.trim()) {
             if (OPENROUTER_API_KEY) {
@@ -164,17 +158,17 @@ module.exports = async (req, res) => {
                     const reply = await chatWithQwen(textMessage);
                     await sendWAPilotMessage(chatId, reply);
                 } catch (error) {
-                    // لو فشل OpenRouter، نستخدم الرد الاحتياطي
+                    console.log('⚠️ Falling back to default replies');
                     const fallback = getFallbackReply(textMessage);
                     await sendWAPilotMessage(chatId, fallback);
                 }
             } else {
-                // مفيش API Key
+                console.log('⚠️ No API Key, using default replies');
                 const fallback = getFallbackReply(textMessage);
                 await sendWAPilotMessage(chatId, fallback);
             }
         } else {
-            await sendWAPilotMessage(chatId, "أهلاً بيك! اكتبلي رسالة وهدردش معاك 🤖");
+            await sendWAPilotMessage(chatId, "أهلاً! اكتبلي رسالة.");
         }
         
         return res.status(200).json({ ok: true });
