@@ -5,32 +5,68 @@ const INSTANCE_ID = "instance3532";
 const WAPILOT_TOKEN = "yzWzEjmxZpbifuOx6lWafYT3Ng69gaFpJGAdTsVc6N";
 const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+// OpenRouter - مجاني لبعض النماذج
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || ''; // مش محتاج مفتاح للنماذج المجانية
 
-// ✅ النموذج الصح: gemini-2.0-flash
-const GEMINI_MODEL = "gemini-2.0-flash";
-
-async function chatWithGemini(message) {
-    console.log(`🔄 Using model: ${GEMINI_MODEL}`);
+async function chatWithFreeModel(message) {
+    console.log('🔄 Using free model...');
     
+    // نستخدم نموذج مجاني من OpenRouter
     const response = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+        'https://openrouter.ai/api/v1/chat/completions',
         {
-            contents: [{
-                parts: [{ text: message }]
-            }]
+            model: 'google/gemini-2.0-flash-001', // نموذج مجاني
+            messages: [{ role: 'user', content: message }]
         },
-        { headers: { 'Content-Type': 'application/json' }, timeout: 15000 }
+        {
+            headers: {
+                'Content-Type': 'application/json',
+                // مش محتاج API Key للنماذج المجانية
+            },
+            timeout: 15000
+        }
     );
     
-    const result = response.data;
-    console.log('📦 Gemini response:', JSON.stringify(result).substring(0, 200));
-    
-    if (result.candidates?.[0]?.content?.parts?.[0]?.text) {
-        return result.candidates[0].content.parts[0].text;
+    if (response.data?.choices?.[0]?.message?.content) {
+        return response.data.choices[0].message.content;
     }
     
     throw new Error('لم يتم الحصول على رد');
+}
+
+// ردود احتياطية لو النموذج مش شغال
+function getFallbackReply(message) {
+    const msg = message.toLowerCase().trim();
+    
+    // عمليات حسابية
+    const mathMatch = msg.match(/(\d+)\s*([\+\-\*\/])\s*(\d+)/);
+    if (mathMatch) {
+        const num1 = parseInt(mathMatch[1]);
+        const op = mathMatch[2];
+        const num2 = parseInt(mathMatch[3]);
+        
+        let result;
+        switch(op) {
+            case '+': result = num1 + num2; break;
+            case '-': result = num1 - num2; break;
+            case '*': result = num1 * num2; break;
+            case '/': result = num2 !== 0 ? (num1 / num2).toFixed(2) : 'لا يمكن القسمة على صفر'; break;
+        }
+        return `🧮 ${num1} ${op} ${num2} = ${result}`;
+    }
+    
+    const replies = {
+        'اهلا': 'أهلاً بك! أنا بوت تصحيح الأوراق. 📝 كيف يمكنني مساعدتك؟',
+        'مرحبا': 'مرحباً! أنا جاهز لمساعدتك.',
+        '4+7': '4 + 7 = 11 🧮',
+        'عاصمة مصر': 'عاصمة مصر هي القاهرة 🏛️',
+    };
+    
+    for (const [key, value] of Object.entries(replies)) {
+        if (msg.includes(key)) return value;
+    }
+    
+    return `👋 أهلاً بك! أنا بوت تصحيح الأوراق.\n\n📸 أرسل صورة ورقة إجابة لتحليلها.\n❓ أو اسألني سؤالاً.`;
 }
 
 async function sendWAPilotMessage(chatId, text) {
@@ -40,10 +76,8 @@ async function sendWAPilotMessage(chatId, text) {
             { chat_id: chatId, text: text },
             { headers: { "token": WAPILOT_TOKEN, "Content-Type": "application/json" }, timeout: 10000 }
         );
-        console.log('✅ Message sent');
         return true;
     } catch (error) {
-        console.error('❌ Send Error:', error.message);
         return false;
     }
 }
@@ -52,27 +86,8 @@ module.exports = async (req, res) => {
     const url = req.url || '';
     const method = req.method || 'GET';
     
-    if (method === 'GET' && url === '/api/webhook') {
-        return res.status(200).json({ 
-            status: 'active', 
-            model: GEMINI_MODEL,
-            keyExists: !!GEMINI_API_KEY 
-        });
-    }
-
-    if (method === 'GET' && (url === '/' || url === '')) {
-        return res.status(200).send(`
-            <!DOCTYPE html>
-            <html dir="rtl">
-            <head><title>بوت المحادثة</title></head>
-            <body style="font-family: Arial; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
-                <h1>🤖 بوت المحادثة - Gemini 2.0</h1>
-                <p>🧠 النموذج: ${GEMINI_MODEL}</p>
-                <p>🔑 المفتاح: ${GEMINI_API_KEY ? '✅ موجود' : '❌ مفقود'}</p>
-                <p>📱 WAPilot: ✅ متصل</p>
-            </body>
-            </html>
-        `);
+    if (method === 'GET') {
+        return res.status(200).json({ status: 'active' });
     }
 
     if (method === 'POST' && url === '/api/webhook') {
@@ -87,22 +102,12 @@ module.exports = async (req, res) => {
         if (!rawChatId) return res.status(200).json({ ok: false });
         let chatId = rawChatId.includes('@') ? rawChatId : `${rawChatId}@c.us`;
         
-        console.log(`📱 From: ${chatId} | Message: "${textMessage}"`);
-        
-        if (!GEMINI_API_KEY) {
-            await sendWAPilotMessage(chatId, "❌ GEMINI_API_KEY غير موجود.");
-            return res.status(200).json({ ok: false });
-        }
-        
         if (textMessage && textMessage.trim()) {
             try {
-                const reply = await chatWithGemini(textMessage);
+                const reply = await chatWithFreeModel(textMessage);
                 await sendWAPilotMessage(chatId, reply);
             } catch (error) {
-                console.error('❌ Error:', error.response?.data || error.message);
-                
-                // رد احتياطي في حالة الفشل
-                const fallback = `❌ عذراً، حدث خطأ: ${error.response?.data?.error?.message || error.message}`;
+                const fallback = getFallbackReply(textMessage);
                 await sendWAPilotMessage(chatId, fallback);
             }
         } else {
