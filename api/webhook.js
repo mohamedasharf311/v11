@@ -6,68 +6,64 @@ const WAPILOT_TOKEN = "yzWzEjmxZpbifuOx6lWafYT3Ng69gaFpJGAdTsVc6N";
 const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
-const MODEL = 'qwen/qwen2.5-7b-instruct';
 
-async function chatWithQwen(message) {
-    console.log('🔄 Calling OpenRouter...');
-    console.log('🔑 API Key exists:', !!OPENROUTER_API_KEY);
-    console.log('🔑 API Key prefix:', OPENROUTER_API_KEY.substring(0, 10) + '...');
-    
-    if (!OPENROUTER_API_KEY) {
-        throw new Error('OPENROUTER_API_KEY غير موجود');
-    }
-    
-    try {
-        const response = await axios.post(
-            'https://openrouter.ai/api/v1/chat/completions',
-            {
-                model: MODEL,
-                messages: [
-                    {
-                        role: "system",
-                        content: `أنت مساعد ذكي اسمه "بوت تصحيح الأوراق". اتكلم باللهجة المصرية العامية. خليك ودود وبسيط.`
-                    },
-                    {
-                        role: "user",
-                        content: message
-                    }
-                ],
-                temperature: 0.7,
-                max_tokens: 500
-            },
-            {
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-                    'HTTP-Referer': 'https://school-gamma-ten.vercel.app',
-                    'X-Title': 'WhatsApp OCR Bot'
+// قائمة النماذج المجانية (هنحاول نستخدم أول واحد شغال)
+const MODELS = [
+    'qwen/qwen-2.5-7b-instruct',      // Qwen 7B - الأفضل للعربي
+    'qwen/qwen-2.5-3b-instruct',      // Qwen 3B - أسرع
+    'google/gemini-2.0-flash-001',    // Gemini 2.0 Flash
+    'meta-llama/llama-3.2-3b-instruct' // Llama 3.2
+];
+
+async function chatWithAI(message) {
+    for (const model of MODELS) {
+        try {
+            console.log(`🔄 Trying model: ${model}`);
+            
+            const response = await axios.post(
+                'https://openrouter.ai/api/v1/chat/completions',
+                {
+                    model: model,
+                    messages: [
+                        {
+                            role: "system",
+                            content: `أنت مساعد ذكي اسمه "بوت تصحيح الأوراق". اتكلم باللهجة المصرية العامية. خليك ودود وبسيط.`
+                        },
+                        {
+                            role: "user",
+                            content: message
+                        }
+                    ],
+                    temperature: 0.7,
+                    max_tokens: 500
                 },
-                timeout: 20000
+                {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+                        'HTTP-Referer': 'https://school-gamma-ten.vercel.app',
+                        'X-Title': 'WhatsApp OCR Bot'
+                    },
+                    timeout: 20000
+                }
+            );
+            
+            if (response.data?.choices?.[0]?.message?.content) {
+                console.log(`✅ Success with ${model}`);
+                return response.data.choices[0].message.content;
             }
-        );
-        
-        console.log('📦 OpenRouter response status:', response.status);
-        console.log('📦 Response data:', JSON.stringify(response.data).substring(0, 300));
-        
-        if (response.data?.choices?.[0]?.message?.content) {
-            return response.data.choices[0].message.content;
+            
+        } catch (error) {
+            console.log(`❌ ${model} failed:`, error.response?.data?.error?.message || error.message);
         }
-        
-        throw new Error('هيكل الرد غير متوقع');
-        
-    } catch (error) {
-        console.error('❌ OpenRouter Error Details:');
-        console.error('Status:', error.response?.status);
-        console.error('Data:', error.response?.data);
-        console.error('Message:', error.message);
-        throw error;
     }
+    
+    throw new Error('كل النماذج فشلت');
 }
 
 function getFallbackReply(message) {
     const msg = message.toLowerCase().trim();
     
-    // عمليات حسابية
     const mathMatch = msg.match(/(\d+)\s*([\+\-\*\/])\s*(\d+)/);
     if (mathMatch) {
         const num1 = parseInt(mathMatch[1]);
@@ -117,22 +113,17 @@ module.exports = async (req, res) => {
     const method = req.method || 'GET';
     
     if (method === 'GET' && url === '/api/webhook') {
-        return res.status(200).json({ 
-            status: 'active',
-            openrouter: !!OPENROUTER_API_KEY,
-            keyPrefix: OPENROUTER_API_KEY ? OPENROUTER_API_KEY.substring(0, 10) + '...' : 'none'
-        });
+        return res.status(200).json({ status: 'active' });
     }
 
     if (method === 'GET' && (url === '/' || url === '')) {
         return res.status(200).send(`
             <!DOCTYPE html>
             <html dir="rtl">
-            <head><title>بوت Qwen</title></head>
+            <head><title>بوت AI</title></head>
             <body style="font-family: Arial; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
-                <h1>🤖 بوت Qwen</h1>
-                <p>🔑 OpenRouter: ${OPENROUTER_API_KEY ? '✅ موجود' : '❌ مفقود'}</p>
-                <p>🧠 النموذج: ${MODEL}</p>
+                <h1>🤖 بوت AI</h1>
+                <p>✅ شغال مع OpenRouter</p>
             </body>
             </html>
         `);
@@ -150,20 +141,16 @@ module.exports = async (req, res) => {
         if (!rawChatId) return res.status(200).json({ ok: false });
         let chatId = rawChatId.includes('@') ? rawChatId : `${rawChatId}@c.us`;
         
-        console.log(`📱 Message: "${textMessage}"`);
-        
         if (textMessage && textMessage.trim()) {
             if (OPENROUTER_API_KEY) {
                 try {
-                    const reply = await chatWithQwen(textMessage);
+                    const reply = await chatWithAI(textMessage);
                     await sendWAPilotMessage(chatId, reply);
                 } catch (error) {
-                    console.log('⚠️ Falling back to default replies');
                     const fallback = getFallbackReply(textMessage);
                     await sendWAPilotMessage(chatId, fallback);
                 }
             } else {
-                console.log('⚠️ No API Key, using default replies');
                 const fallback = getFallbackReply(textMessage);
                 await sendWAPilotMessage(chatId, fallback);
             }
