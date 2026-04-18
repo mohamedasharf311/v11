@@ -6,7 +6,14 @@ const WAPILOT_TOKEN = "yzWzEjmxZpbifuOx6lWafYT3Ng69gaFpJGAdTsVc6N";
 const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent";
+
+// قائمة النماذج اللي هنحاول نستخدمها
+const MODELS = [
+    "gemini-pro",           // النموذج الأساسي للنص
+    "gemini-1.0-pro",       // النموذج القديم
+    "gemini-1.5-pro",       // النموذج المتقدم
+    "chat-bison-001"        // نموذج PaLM القديم
+];
 
 async function imageUrlToBase64(url) {
     try {
@@ -15,9 +22,47 @@ async function imageUrlToBase64(url) {
         const mimeType = response.headers['content-type'] || 'image/jpeg';
         return { base64, mimeType };
     } catch (error) {
-        console.error('❌ Image fetch error:', error.message);
         return null;
     }
+}
+
+async function tryModel(modelName, requestBody) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${GEMINI_API_KEY}`;
+    
+    console.log(`🔄 Trying model: ${modelName}`);
+    
+    const response = await axios.post(url, requestBody, {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 30000
+    });
+    
+    return response.data;
+}
+
+async function chatWithGemini(message) {
+    const requestBody = {
+        contents: [{
+            parts: [{ text: message }]
+        }]
+    };
+    
+    let lastError = null;
+    
+    for (const modelName of MODELS) {
+        try {
+            const result = await tryModel(modelName, requestBody);
+            
+            if (result.candidates?.[0]?.content?.parts?.[0]?.text) {
+                console.log(`✅ Success with ${modelName}`);
+                return result.candidates[0].content.parts[0].text;
+            }
+        } catch (error) {
+            console.log(`❌ ${modelName} failed:`, error.response?.data?.error?.message || error.message);
+            lastError = error;
+        }
+    }
+    
+    throw new Error('جميع النماذج فشلت: ' + (lastError?.response?.data?.error?.message || lastError?.message));
 }
 
 async function analyzeImageWithGemini(imageBase64, mimeType) {
@@ -30,51 +75,26 @@ async function analyzeImageWithGemini(imageBase64, mimeType) {
         }]
     };
     
-    console.log('🖼️ Sending image to Gemini...');
+    // للصور نجرب gemini-pro-vision
+    const visionModels = ["gemini-pro-vision", "gemini-1.0-pro-vision", ...MODELS];
     
-    const response = await axios.post(
-        `${GEMINI_API_URL}?key=${GEMINI_API_KEY}`,
-        requestBody,
-        { headers: { 'Content-Type': 'application/json' }, timeout: 30000 }
-    );
+    let lastError = null;
     
-    const result = response.data;
-    if (result.candidates?.[0]?.content?.parts?.[0]?.text) {
-        return result.candidates[0].content.parts[0].text;
-    }
-    throw new Error('لم يتم الحصول على رد');
-}
-
-async function chatWithGemini(message) {
-    const requestBody = {
-        contents: [{
-            parts: [{ text: message }]
-        }]
-    };
-    
-    console.log('💬 Sending text to Gemini:', message.substring(0, 50));
-    
-    try {
-        const response = await axios.post(
-            `${GEMINI_API_URL}?key=${GEMINI_API_KEY}`,
-            requestBody,
-            { headers: { 'Content-Type': 'application/json' }, timeout: 15000 }
-        );
-        
-        console.log('📦 Gemini response status:', response.status);
-        
-        const result = response.data;
-        if (result.candidates?.[0]?.content?.parts?.[0]?.text) {
-            return result.candidates[0].content.parts[0].text;
+    for (const modelName of visionModels) {
+        try {
+            const result = await tryModel(modelName, requestBody);
+            
+            if (result.candidates?.[0]?.content?.parts?.[0]?.text) {
+                console.log(`✅ Image success with ${modelName}`);
+                return result.candidates[0].content.parts[0].text;
+            }
+        } catch (error) {
+            console.log(`❌ ${modelName} failed:`, error.response?.data?.error?.message || error.message);
+            lastError = error;
         }
-        
-        console.error('❌ Unexpected response structure:', JSON.stringify(result).substring(0, 200));
-        throw new Error('هيكل الرد غير متوقع');
-        
-    } catch (error) {
-        console.error('❌ Gemini API Error:', error.response?.data || error.message);
-        throw error;
     }
+    
+    throw new Error('جميع نماذج الصور فشلت');
 }
 
 async function sendWAPilotMessage(chatId, text) {
@@ -84,10 +104,8 @@ async function sendWAPilotMessage(chatId, text) {
             { chat_id: chatId, text: text },
             { headers: { "token": WAPILOT_TOKEN, "Content-Type": "application/json" }, timeout: 10000 }
         );
-        console.log('✅ Message sent');
         return true;
     } catch (error) {
-        console.error('❌ Send Error:', error.message);
         return false;
     }
 }
@@ -97,11 +115,7 @@ module.exports = async (req, res) => {
     const method = req.method || 'GET';
     
     if (method === 'GET' && url === '/api/webhook') {
-        return res.status(200).json({ 
-            status: 'active', 
-            gemini: !!GEMINI_API_KEY,
-            keyLength: GEMINI_API_KEY.length
-        });
+        return res.status(200).json({ status: 'active' });
     }
 
     if (method === 'GET' && (url === '/' || url === '')) {
@@ -111,8 +125,7 @@ module.exports = async (req, res) => {
             <head><title>بوت تصحيح الأوراق</title></head>
             <body style="font-family: Arial; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
                 <h1>🤖 بوت تصحيح الأوراق</h1>
-                <p>🧠 Gemini: ${GEMINI_API_KEY ? '✅ المفتاح موجود' : '❌ المفتاح مفقود'}</p>
-                <p>📱 WAPilot: ✅ متصل</p>
+                <p>🧠 Gemini: ${GEMINI_API_KEY ? '✅' : '❌'}</p>
             </body>
             </html>
         `);
@@ -134,14 +147,6 @@ module.exports = async (req, res) => {
         if (!rawChatId) return res.status(200).json({ ok: false });
         let chatId = rawChatId.includes('@') ? rawChatId : `${rawChatId}@c.us`;
         
-        console.log(`📱 From: ${chatId} | Image: ${!!mediaUrl} | Text: "${textMessage}"`);
-        
-        if (!GEMINI_API_KEY) {
-            await sendWAPilotMessage(chatId, "❌ GEMINI_API_KEY غير موجود.");
-            return res.status(200).json({ ok: false });
-        }
-        
-        // معالجة الصورة
         if (mediaUrl) {
             await sendWAPilotMessage(chatId, "⏳ جاري تحليل الصورة...");
             
@@ -155,32 +160,17 @@ module.exports = async (req, res) => {
                 const analysis = await analyzeImageWithGemini(imageData.base64, imageData.mimeType);
                 await sendWAPilotMessage(chatId, `🤖 *تحليل الصورة:*\n\n${analysis}`);
             } catch (error) {
-                await sendWAPilotMessage(chatId, `❌ خطأ في تحليل الصورة: ${error.message}`);
+                await sendWAPilotMessage(chatId, `❌ ${error.message}`);
             }
-        }
-        
-        // معالجة النص
-        else if (textMessage && textMessage.trim()) {
+        } else if (textMessage && textMessage.trim()) {
             try {
                 const reply = await chatWithGemini(textMessage);
                 await sendWAPilotMessage(chatId, reply);
             } catch (error) {
-                // رد افتراضي لو Gemini فشل
-                const reply = `👋 أهلاً بك! أنا بوت تصحيح الأوراق.
-
-📸 أرسل صورة ورقة إجابة لتحليلها واستخراج النص منها.
-
-❓ أو اسألني سؤالاً وسأحاول مساعدتك.
-
-⚠️ ملاحظة: Gemini API غير متاح حالياً، جاري العمل على إصلاح المشكلة.`;
-                
-                await sendWAPilotMessage(chatId, reply);
+                await sendWAPilotMessage(chatId, `❌ ${error.message}`);
             }
-        }
-        
-        // مفيش رسالة
-        else {
-            await sendWAPilotMessage(chatId, "📸 أرسل صورة ورقة الإجابة أو اكتب سؤالك.");
+        } else {
+            await sendWAPilotMessage(chatId, "📸 أرسل صورة أو اكتب سؤالك");
         }
         
         return res.status(200).json({ ok: true });
