@@ -9,6 +9,7 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 
 // قائمة النماذج المجانية (هنحاول نستخدم أول واحد شغال)
 const MODELS = [
+    'google/gemini-2.0-flash-001',
     'qwen/qwen-2.5-7b-instruct',      // Qwen 7B - الأفضل للعربي
     'qwen/qwen-2.5-3b-instruct',      // Qwen 3B - أسرع
     'google/gemini-2.0-flash-001',    // Gemini 2.0 Flash
