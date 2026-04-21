@@ -17,216 +17,105 @@ const TEACHER_SYSTEM_PROMPT = `أنت مدرس صبور لطلاب المرحل�
 
 مهمتك:
 - أنت هنا للشرح فقط
-- متسألش أسئلة رياضية بنفسك
-- رد على أسئلة الطالب في المواد المختلفة`;
+- متسألش أسئلة بنفسك
+- رد على أسئلة الطالب مباشرة واشرح المطلوب بالتفصيل`;
 
-// رسائل تحفيزية عشوائية
-const motivationalMessages = [
-    "🔥 يلا بينا نكسر الدنيا!",
-    "💪 جاهز يا بطل؟",
-    "👀 ركّز معايا كده",
-    "🚀 نبدأ التحدي؟",
-    "🎯 تمام يا بطل",
-    "✨ يلا بينا"
-];
+// رسائل تحفيزية
+const motivationalMessages = {
+    math: ["🔥 يلا بينا نكسر الدنيا!", "💪 جاهز يا بطل؟", "👀 ركّز معايا كده", "🚀 نبدأ التحدي؟", "🎯 تمام يا بطل"],
+    science: ["🔬 خلينا نكتشف سوا!", "🧪 سؤال جميل!", "🌍 معلومة حلوة!"],
+    default: ["✨ يلا بينا", "🎯 تمام يا بطل", "💪 يلا"]
+};
 
-function getMotivationalMessage() {
-    return motivationalMessages[Math.floor(Math.random() * motivationalMessages.length)];
+function getMotivationalMessage(subject) {
+    const messages = motivationalMessages[subject] || motivationalMessages.default;
+    return messages[Math.floor(Math.random() * messages.length)];
 }
 
-// 1. دالة التحيات
-function handleGreeting(message) {
-    const msg = message.toLowerCase().trim();
-    
-    if (msg.includes('مساء الخير')) {
-        return "🌙 مساء النور يا بطل! عامل إيه النهاردة؟ جهيز تذاكر ولا عايز تسأل في حاجة معينة؟";
-    }
-    
-    if (msg.includes('صباح الخير')) {
-        return "🌞 صباح النور يا بطل! عامل إيه النهاردة؟ جهيز تذاكر ولا عايز تسأل في حاجة معينة؟";
-    }
-    
-    if (msg.includes('السلام عليكم')) {
-        return "👋 وعليكم السلام! أنا مدرسك الصبور. ايه اللي عايز تتعلمه النهاردة؟";
-    }
-    
-    if (msg.includes('اهلا') || msg.includes('هلا') || msg.includes('مرحبا')) {
-        return "😊 أهلاً بيك يا بطل! النهاردة هنتعلم ايه؟";
-    }
-    
-    if (msg.includes('شكر') || msg.includes('تسلم')) {
-        return "العفو يا بطل 🤗";
-    }
-    
-    if (msg.includes('عامل ايه') || msg.includes('ازيك')) {
-        return "الحمد لله تمام يا بطل! جهيز نبدأ؟ 💪";
-    }
-    
-    return null;
-}
-
-// 2. توليد أسئلة لكل مادة
-function generateScienceQuestion() {
-    const questions = [
-        "🌍 ايه هو الكوكب اللي بنعيش عليه؟ (الأرض - المريخ - الزهرة)",
-        "💧 رمز الماء H2O، H2O دي بتتكون من ايه؟ (هيدروجين وأكسجين - هيدروجين ونيتروجين - أكسجين وكربون)",
-        "🌞 ايه مصدر الضوء والحرارة الأساسي على الأرض؟ (القمر - الشمس - النجوم)",
-        "🌿 ايه العملية اللي النباتات بتعملها عشان تصنع غذائها؟ (النتح - البناء الضوئي - التنفس)"
-    ];
-    return questions[Math.floor(Math.random() * questions.length)];
-}
-
-function generateArabicQuestion() {
-    const questions = [
-        "📚 اعرب كلمة (الولد) في جملة: ذهب الولد إلى المدرسة",
-        "📖 ما هو جمع كلمة 'كتاب'؟ (كتب - كتابات - كتيب)",
-        "✍️ ايه هو ضد كلمة 'طويل'؟ (قصير - عريض - كبير)",
-        "📝 في جملة 'أكل الولد التفاحة'، الفاعل هو؟ (أكل - الولد - التفاحة)"
-    ];
-    return questions[Math.floor(Math.random() * questions.length)];
-}
-
-function generateEnglishQuestion() {
-    const questions = [
-        "🇬🇧 What is the past tense of 'go'? (went - gone - going)",
-        "🇬🇧 What is the opposite of 'big'? (small - large - huge)",
-        "🇬🇧 Complete: I ___ a student. (am - is - are)",
-        "🇬🇧 What does 'Hello' mean in Arabic? (مرحبا - وداعا - شكرا)"
-    ];
-    return questions[Math.floor(Math.random() * questions.length)];
-}
-
-// 3. توليد أسئلة رياضيات حسب المستوى
-function generateAdditionQuestion(session) {
-    const max = Math.min(session.level * 5, 50);
-    const num1 = Math.floor(Math.random() * max) + 1;
-    const num2 = Math.floor(Math.random() * max) + 1;
-    
-    session.lastQuestion = `🧮 ${num1} + ${num2} = كام؟`;
-    session.correctAnswer = num1 + num2;
-    session.mode = 'question';
-    session.failCount = 0;
-    session.subject = 'math';
-    session.currentOperation = 'addition';
-    
-    return session.lastQuestion;
-}
-
-function generateSubtractionQuestion(session) {
-    const max = Math.min(session.level * 5, 50);
-    const num1 = Math.floor(Math.random() * max) + 10;
-    const num2 = Math.floor(Math.random() * (num1 - 1)) + 1;
-    
-    session.lastQuestion = `🧮 ${num1} - ${num2} = كام؟`;
-    session.correctAnswer = num1 - num2;
-    session.mode = 'question';
-    session.failCount = 0;
-    session.subject = 'math';
-    session.currentOperation = 'subtraction';
-    
-    return session.lastQuestion;
-}
-
-function generateMultiplicationQuestion(session) {
-    const max = Math.min(session.level * 3, 10);
-    const num1 = Math.floor(Math.random() * max) + 1;
-    const num2 = Math.floor(Math.random() * max) + 1;
-    
-    session.lastQuestion = `🧮 ${num1} × ${num2} = كام؟`;
-    session.correctAnswer = num1 * num2;
-    session.mode = 'question';
-    session.failCount = 0;
-    session.subject = 'math';
-    session.currentOperation = 'multiplication';
-    
-    return session.lastQuestion;
-}
-
-function generateDivisionQuestion(session) {
-    const max = Math.min(session.level * 3, 10);
-    const num2 = Math.floor(Math.random() * max) + 1;
-    const result = Math.floor(Math.random() * max) + 1;
-    const num1 = num2 * result;
-    
-    session.lastQuestion = `🧮 ${num1} ÷ ${num2} = كام؟`;
-    session.correctAnswer = result;
-    session.mode = 'question';
-    session.failCount = 0;
-    session.subject = 'math';
-    session.currentOperation = 'division';
-    
-    return session.lastQuestion;
-}
-
-function generateQuestionByTopic(session) {
-    if (session.subject === 'science') {
-        return generateScienceQuestion();
-    }
-    if (session.subject === 'arabic') {
-        return generateArabicQuestion();
-    }
-    if (session.subject === 'english') {
-        return generateEnglishQuestion();
-    }
-    // math
-    switch (session.currentOperation) {
-        case 'subtraction':
-            return generateSubtractionQuestion(session);
-        case 'multiplication':
-            return generateMultiplicationQuestion(session);
-        case 'division':
-            return generateDivisionQuestion(session);
-        default:
-            return generateAdditionQuestion(session);
-    }
-}
-
-// 4. Smart Detection محسنة
+// 1. Smart Detection محسنة - Priority للشرح
 function smartDetect(message, session) {
     const msg = message.toLowerCase().trim();
     
     // أولاً: التحيات
-    const greetingResponse = handleGreeting(message);
-    if (greetingResponse) {
-        return { subject: 'general', intent: 'greeting', response: greetingResponse };
+    if (msg.includes('مساء الخير')) {
+        return { subject: 'general', intent: 'greeting', response: "🌙 مساء النور يا بطل! عامل إيه النهاردة؟" };
+    }
+    if (msg.includes('صباح الخير')) {
+        return { subject: 'general', intent: 'greeting', response: "🌞 صباح النور يا بطل! عامل إيه النهاردة؟" };
+    }
+    if (msg.includes('مرحبا') || msg.includes('اهلا')) {
+        return { subject: 'general', intent: 'greeting', response: "😊 أهلاً بيك يا بطل! النهاردة هنتعلم ايه؟" };
     }
     
-    // ثانياً: طلب مسألة/سؤال/تدريب
+    // ثانياً: أسئلة معرفية (شرح) - دي أهم حاجة
+    const isQuestion = msg.startsWith('ايه') || msg.startsWith('ما هو') || 
+                       msg.includes('يعني') || msg.includes('رمز') ||
+                       msg.includes('اشرح') || msg.includes('شرح') ||
+                       msg.includes('ماذا') || msg.includes('كيف');
+    
+    if (isQuestion) {
+        console.log(`🔍 Question/Explain detected: ${msg}`);
+        
+        // تحديد المادة من السؤال
+        if (msg.includes('h2o') || msg.includes('ماء') || msg.includes('الماء')) {
+            return { subject: 'science', intent: 'explain', topic: 'h2o' };
+        }
+        if (msg.includes('كوكب') || msg.includes('الارض') || msg.includes('القمر')) {
+            return { subject: 'science', intent: 'explain', topic: 'planet' };
+        }
+        if (msg.includes('جاذبية') || msg.includes('نيوتن')) {
+            return { subject: 'science', intent: 'explain', topic: 'gravity' };
+        }
+        if (msg.includes('جمع') || msg.includes('جمع')) {
+            return { subject: 'math', intent: 'explain', operation: 'addition' };
+        }
+        if (msg.includes('طرح')) {
+            return { subject: 'math', intent: 'explain', operation: 'subtraction' };
+        }
+        if (msg.includes('قسمة')) {
+            return { subject: 'math', intent: 'explain', operation: 'division' };
+        }
+        
+        return { subject: session.subject || 'general', intent: 'explain' };
+    }
+    
+    // ثالثاً: طلب مسألة/سؤال/تدريب
     if (msg.includes('مسألة') || msg.includes('سؤال') || 
         msg.includes('اديني') || msg.includes('هات') ||
-        msg.includes('عايز سؤال') || msg.includes('عايز مسألة') ||
-        msg.includes('تدريب') || msg.includes('اتدرب')) {
+        msg.includes('عايز سؤال') || msg.includes('تدريب') ||
+        msg.includes('اتدرب')) {
         return { subject: session.subject || 'math', intent: 'practice' };
     }
     
-    // ثالثاً: كشف المواد (لغير الرياضيات)
-    if (msg.includes('علوم') || msg.includes('h2o') || msg.includes('ماء') || 
-        msg.includes('كيمياء') || msg.includes('فيزياء') || msg.includes('كوكب')) {
+    // رابعاً: تحديد المواد للتدريب
+    if (msg.includes('علوم')) {
         session.subject = 'science';
-        if (msg.includes('اشرح')) return { subject: 'science', intent: 'explain' };
         return { subject: 'science', intent: 'practice' };
     }
     
-    if (msg.includes('عربي') || msg.includes('نحو') || msg.includes('اعراب')) {
+    if (msg.includes('عربي')) {
         session.subject = 'arabic';
-        if (msg.includes('اشرح')) return { subject: 'arabic', intent: 'explain' };
         return { subject: 'arabic', intent: 'practice' };
     }
     
-    if (msg.includes('انجليزي') || msg.includes('english')) {
+    if (msg.includes('انجليزي')) {
         session.subject = 'english';
-        if (msg.includes('اشرح')) return { subject: 'english', intent: 'explain' };
         return { subject: 'english', intent: 'practice' };
     }
     
-    // رابعاً: الرياضيات
+    if (msg.includes('رياضيات') || msg.includes('حساب')) {
+        session.subject = 'math';
+        return { subject: 'math', intent: 'practice' };
+    }
+    
+    // خامساً: العمليات الحسابية للرياضيات
     if (msg.includes('جمع')) {
         session.currentOperation = 'addition';
         if (msg.includes('اشرح')) return { subject: 'math', intent: 'explain', operation: 'addition' };
         return { subject: 'math', intent: 'practice', operation: 'addition' };
     }
     
-    if (msg.includes('طرح') || msg.includes('طرخ')) {
+    if (msg.includes('طرح')) {
         session.currentOperation = 'subtraction';
         if (msg.includes('اشرح')) return { subject: 'math', intent: 'explain', operation: 'subtraction' };
         return { subject: 'math', intent: 'practice', operation: 'subtraction' };
@@ -238,168 +127,174 @@ function smartDetect(message, session) {
         return { subject: 'math', intent: 'practice', operation: 'multiplication' };
     }
     
-    if (msg.includes('قسمة') || msg.includes('قسمه')) {
+    if (msg.includes('قسمة')) {
         session.currentOperation = 'division';
         if (msg.includes('اشرح')) return { subject: 'math', intent: 'explain', operation: 'division' };
         return { subject: 'math', intent: 'practice', operation: 'division' };
     }
     
-    if (msg.includes('رياضيات') || msg.includes('حساب')) {
-        session.subject = 'math';
-        return { subject: 'math', intent: 'practice' };
-    }
-    
-    // خامساً: لو في وضع سؤال وجاوب برقم
+    // سادساً: لو في وضع سؤال وجاوب برقم
     if (/^\d+$/.test(msg) && session.mode === 'question') {
         return { subject: session.subject || 'math', intent: 'answer' };
-    }
-    
-    // سادساً: طلب شرح عام
-    if (msg.includes('اشرح') || msg.includes('شرح')) {
-        return { subject: session.subject || 'math', intent: 'explain' };
     }
     
     return null;
 }
 
-// 5. AI Detection (للأسئلة المعقدة فقط)
-async function detectWithAI(message) {
-    if (message.length < 5) return null;
-    
-    const prompt = `حدد المادة فقط (science / arabic / english / general)
-رجع JSON بس
+// 2. وظائف الشرح للمواد المختلفة
+async function getScienceExplanation(topic, message) {
+    if (topic === 'h2o' || message.toLowerCase().includes('h2o')) {
+        return `💧 **H2O ده رمز الماء!**
 
-message: "${message}"`;
+الماء بيتكون من:
+• H = هيدروجين (Hydrogen) - ذرتين
+• O = أكسجين (Oxygen) - ذرة واحدة
 
-    try {
-        const response = await axios.post(
-            'https://openrouter.ai/api/v1/chat/completions',
-            {
-                model: MODEL,
-                messages: [{ role: "user", content: prompt }],
-                temperature: 0,
-                max_tokens: 100
-            },
-            {
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-                    'HTTP-Referer': 'https://school-gamma-ten.vercel.app',
-                    'X-Title': 'WhatsApp Teacher Bot'
-                },
-                timeout: 10000
-            }
-        );
-        
-        const content = response.data?.choices?.[0]?.message?.content || '';
-        const jsonMatch = content.match(/\{.*\}/);
-        if (jsonMatch) {
-            return JSON.parse(jsonMatch[0]);
-        }
-        
-        return null;
-    } catch (error) {
-        return null;
+يعني H2O = 2 هيدروجين + 1 أكسجين
+
+الماء بيكوّن حوالي 71% من سطح الكوكب، وهو أساس الحياة على الأرض 🌍
+
+عايز تعرف حاجة تانية عن الماء؟`;
     }
+    
+    if (topic === 'planet' || message.toLowerCase().includes('كوكب')) {
+        return `🌍 **الكواكب في المجموعة الشمسية:**
+
+1. عطارد (الأقرب للشمس)
+2. الزهرة
+3. الأرض (الكوكب اللي بنعيش عليه)
+4. المريخ (الكوكب الأحمر)
+5. المشتري (أكبر كوكب)
+6. زحل (اللي حواليه حلقات)
+7. أورانوس
+8. نبتون
+
+عايز تعرف تفاصيل عن كوكب معين؟`;
+    }
+    
+    if (topic === 'gravity' || message.toLowerCase().includes('جاذبية')) {
+        return `🍎 **الجاذبية الأرضية**
+
+العالم إسحاق نيوتن هو اللي اكتشف الجاذبية لما شاف تفاحة بتقع من الشجرة.
+
+الجاذبية هي قوة بتجذب الأجسام نحو الأرض. يعني هي السبب إننا بنقف على الأرض وما بنطيرش في الهوا!
+
+كتلة الأرض كبيرة جداً، فبتجذب كل حاجة ليها بقوة.`;
+    }
+    
+    return null;
 }
 
-// 6. Process with Smart Exit
-async function processWithSmartDetection(message, session) {
-    let detection = smartDetect(message, session);
-    
-    if (detection && detection.response) {
-        return { action: 'direct', detection, directResponse: detection.response };
+async function getMathExplanation(operation, message) {
+    if (operation === 'addition' || message.toLowerCase().includes('جمع')) {
+        return `🧮 **الجمع** هو إنك بتضيف رقمين أو أكتر مع بعض عشان تعرف الناتج الكلي.
+
+مثال: 3 تفاحات 🍎 + 2 تفاحات 🍎 = 5 تفاحات 🍎🍎🍎🍎🍎
+
+علامة الجمع هي (+)`;
+
     }
     
-    if (!detection && message.length > 10) {
-        const aiDetection = await detectWithAI(message);
-        if (aiDetection && aiDetection.subject !== 'general') {
-            session.subject = aiDetection.subject;
-            detection = { subject: aiDetection.subject, intent: 'explain' };
-        }
+    if (operation === 'subtraction' || message.toLowerCase().includes('طرح')) {
+        return `🧮 **الطرح** هو إنك بتاخد رقم من رقم تاني.
+
+مثال: 5 تفاحات 🍎🍎🍎🍎🍎 - 2 تفاحات 🍎🍎 = 3 تفاحات 🍎🍎🍎
+
+علامة الطرح هي (-)`;
     }
     
-    if (!detection) {
-        detection = { subject: session.subject || 'math', intent: 'general' };
+    if (operation === 'division' || message.toLowerCase().includes('قسمة')) {
+        return `🧮 **القسمة** هي توزيع الأرقام بالتساوي.
+
+مثال: 6 تفاحات ÷ 3 أشخاص = كل شخص ياخد 2 تفاحة 🍎🍎
+
+علامة القسمة هي (÷)`;
     }
     
-    // حفظ العملية
-    if (detection.operation) {
-        session.currentOperation = detection.operation;
-    }
-    
-    // حفظ المادة
-    if (detection.subject && detection.subject !== 'general') {
-        session.subject = detection.subject;
-    }
-    
-    console.log(`🎯 Detection: Subject=${session.subject}, Intent=${detection.intent}, Mode=${session.mode}`);
-    
-    // SMART EXIT FROM MODE - أهم حاجة
-    // لو المستخدم غير الموضوع، نخرج من وضع السؤال
-    if (detection.subject !== session.subject && session.mode === 'question') {
-        session.mode = 'learning';
-        session.lastQuestion = null;
-        session.correctAnswer = null;
-        console.log(`🔓 Smart exit: Changed subject from math to ${detection.subject}`);
-    }
-    
-    // لو طلب حاجة غير الإجابة أثناء وضع السؤال
-    if (session.mode === 'question' && detection.intent !== 'answer') {
-        if (detection.subject !== 'math' || detection.intent === 'explain') {
-            session.mode = 'learning';
-            session.lastQuestion = null;
-            session.correctAnswer = null;
-            console.log(`🔓 Smart exit: User requested ${detection.intent} during question mode`);
-        }
-    }
-    
-    // Priority System
-    if (detection.intent === 'answer' && session.mode === 'question') {
-        return { action: 'answer', detection };
-    }
-    
-    if (detection.intent === 'practice') {
-        return { action: 'practice', detection };
-    }
-    
-    if (detection.intent === 'explain') {
-        return { action: 'explain', detection };
-    }
-    
-    if (detection.intent === 'greeting') {
-        return { action: 'greeting', detection };
-    }
-    
-    return { action: 'general', detection };
+    return null;
 }
 
-function handleNumericAnswer(userMessage, session) {
+// 3. توليد أسئلة لكل مادة
+function generateScienceQuestion() {
+    const questions = [
+        "🌍 ايه هو الكوكب اللي بنعيش عليه؟ (الأرض - المريخ - الزهرة)",
+        "💧 ايه هو رمز الماء؟ (H2O - CO2 - O2)",
+        "🌞 ايه مصدر الضوء والحرارة الأساسي على الأرض؟ (القمر - الشمس - النجوم)",
+        "🍎 مين اللي اكتشف الجاذبية الأرضية؟ (نيوتن - أينشتاين - جاليليو)",
+        "🌿 ايه العملية اللي النباتات بتعملها عشان تصنع غذائها؟ (البناء الضوئي - التنفس - النتح)"
+    ];
+    return questions[Math.floor(Math.random() * questions.length)];
+}
+
+function generateMathQuestion(session) {
+    const level = Math.min(session.level, 10);
+    const max = level * 5;
+    
+    if (session.currentOperation === 'subtraction') {
+        const num1 = Math.floor(Math.random() * max) + 10;
+        const num2 = Math.floor(Math.random() * (num1 - 1)) + 1;
+        session.lastQuestion = `🧮 ${num1} - ${num2} = كام؟`;
+        session.correctAnswer = num1 - num2;
+    } else if (session.currentOperation === 'multiplication') {
+        const num1 = Math.floor(Math.random() * Math.min(level, 5)) + 1;
+        const num2 = Math.floor(Math.random() * Math.min(level, 5)) + 1;
+        session.lastQuestion = `🧮 ${num1} × ${num2} = كام؟`;
+        session.correctAnswer = num1 * num2;
+    } else if (session.currentOperation === 'division') {
+        const num2 = Math.floor(Math.random() * Math.min(level, 5)) + 1;
+        const result = Math.floor(Math.random() * Math.min(level, 5)) + 1;
+        const num1 = num2 * result;
+        session.lastQuestion = `🧮 ${num1} ÷ ${num2} = كام؟`;
+        session.correctAnswer = result;
+    } else {
+        const num1 = Math.floor(Math.random() * max) + 1;
+        const num2 = Math.floor(Math.random() * max) + 1;
+        session.lastQuestion = `🧮 ${num1} + ${num2} = كام؟`;
+        session.correctAnswer = num1 + num2;
+    }
+    
+    session.mode = 'question';
+    session.failCount = 0;
+    session.subject = 'math';
+    return session.lastQuestion;
+}
+
+function generateQuestionByTopic(session) {
+    if (session.subject === 'science') {
+        return generateScienceQuestion();
+    }
+    if (session.subject === 'arabic') {
+        return "📚 اعرب كلمة (الولد) في جملة: ذهب الولد إلى المدرسة";
+    }
+    if (session.subject === 'english') {
+        return "🇬🇧 What is the past tense of 'go'? (went - gone - going)";
+    }
+    return generateMathQuestion(session);
+}
+
+// 4. معالجة الإجابات
+function handleAnswer(userMessage, session) {
     const numbers = userMessage.match(/\d+/g);
-    if (!numbers) return null;
+    if (!numbers || session.subject !== 'math') return null;
     
     const userAnswer = parseInt(numbers[0]);
     
     if (session.mode === 'question' && session.correctAnswer !== null) {
         if (userAnswer === session.correctAnswer) {
-            // إجابة صحيحة - نزود المستوى
-            session.level = Math.min(session.level + 1, 10);
+            session.level++;
             session.failCount = 0;
-            const newQuestion = generateQuestionByTopic(session);
-            return `🔥 أداء قوي يا بطل! ✅ إجابة صح!\n📈 مستواك بقى ${session.level}\n\n${getMotivationalMessage()}\n${newQuestion}`;
+            const newQuestion = generateMathQuestion(session);
+            return `🔥 أداء قوي يا بطل! ✅ إجابة صح!\n📈 مستواك بقى ${session.level}\n\n${getMotivationalMessage('math')}\n${newQuestion}`;
         } else {
             session.failCount++;
-            
             if (session.failCount >= 2) {
                 session.failCount = 0;
-                const newQuestion = generateQuestionByTopic(session);
-                return `📝 خلينا نفهمها صح:\n\nالسؤال: ${session.lastQuestion}\nالحل: ${session.correctAnswer}\n\nجهيز للسؤال الجاي؟ 💪\n\n${getMotivationalMessage()}\n${newQuestion}`;
+                const newQuestion = generateMathQuestion(session);
+                return `📝 الحل الصحيح: ${session.correctAnswer}\n\n${getMotivationalMessage('math')}\n${newQuestion}`;
             }
-            
             return `قريب 👀 حاول تاني.\n\n${session.lastQuestion}`;
         }
     }
-    
     return null;
 }
 
@@ -419,7 +314,7 @@ class UserSession {
         this.lastQuestion = null;
         this.correctAnswer = null;
         this.failCount = 0;
-        this.subject = null;
+        this.subject = 'math';
         this.intent = null;
         this.currentOperation = 'addition';
         this.level = 1;
@@ -437,13 +332,9 @@ function getUserSession(chatId) {
 
 async function chatWithAI(message, session) {
     try {
-        const shortHistory = session.conversationHistory.slice(-4);
-        
         const messages = [
             { role: "system", content: TEACHER_SYSTEM_PROMPT },
-            { role: "system", content: `اشرح موضوع: ${session.subject || 'الرياضيات'}. اشرح فقط، متسألش أسئلة.` },
-            ...shortHistory,
-            { role: "user", content: message }
+            { role: "user", content: `اشرحلي: ${message}` }
         ];
         
         const response = await axios.post(
@@ -466,8 +357,7 @@ async function chatWithAI(message, session) {
         );
         
         if (response.data?.choices?.[0]?.message?.content) {
-            let reply = response.data.choices[0].message.content;
-            return cleanResponse(reply) || reply;
+            return cleanResponse(response.data.choices[0].message.content);
         }
         
     } catch (error) {
@@ -505,8 +395,7 @@ module.exports = async (req, res) => {
             <head><title>بوت المدرس الصبور</title></head>
             <body style="font-family: Arial; text-align: center; padding: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
                 <h1>👨‍🏫 بوت المدرس الصبور</h1>
-                <p>✅ شغال - يدعم: رياضيات، علوم، عربي، إنجليزي</p>
-                <p>📈 نظام مستويات - كل إجابة صح تزود مستواك</p>
+                <p>✅ شغال - شرح + أسئلة</p>
             </body>
             </html>
         `);
@@ -530,53 +419,80 @@ module.exports = async (req, res) => {
             const session = getUserSession(chatId);
             let reply = null;
             
-            const { action, detection, directResponse } = await processWithSmartDetection(textMessage, session);
+            // حفظ المادة القديمة للـ Smart Exit
+            const prevSubject = session.subject;
             
-            console.log(`🎯 Action: ${action}, Subject: ${session.subject}`);
+            // Detection
+            let detection = smartDetect(textMessage, session);
             
-            if (action === 'direct' && directResponse) {
-                reply = directResponse;
+            if (!detection) {
+                detection = { subject: session.subject, intent: 'general' };
             }
             
-            else if (action === 'answer') {
-                reply = handleNumericAnswer(textMessage, session);
+            // تحديث المادة
+            if (detection.subject && detection.subject !== 'general') {
+                session.subject = detection.subject;
+            }
+            
+            if (detection.operation) {
+                session.currentOperation = detection.operation;
+            }
+            
+            // Smart Exit - لو غير المادة أثناء وضع السؤال
+            if (prevSubject && detection.subject !== prevSubject && session.mode === 'question') {
+                session.mode = 'learning';
+                session.lastQuestion = null;
+                session.correctAnswer = null;
+                console.log(`🔓 Smart exit: ${prevSubject} → ${detection.subject}`);
+            }
+            
+            console.log(`🎯 Subject: ${session.subject}, Intent: ${detection.intent}, Mode: ${session.mode}`);
+            
+            // التعامل حسب الـ intent
+            if (detection.intent === 'answer') {
+                reply = handleAnswer(textMessage, session);
                 if (!reply && session.lastQuestion) {
                     reply = `🎯 ركّز معايا 👀\n\n${session.lastQuestion}`;
                 }
             }
             
-            else if (action === 'practice') {
-                const question = generateQuestionByTopic(session);
-                reply = `${getMotivationalMessage()}\n${question}`;
-            }
-            
-            else if (action === 'explain') {
-                const aiReply = await chatWithAI(textMessage, session);
-                if (aiReply) {
-                    // بعد الشرح، نسأل لو عايز يتدرب
-                    reply = aiReply + `\n\n🔥 فهمت كده؟ لو عايز تتدرب، قولي "اديني سؤال"`;
+            else if (detection.intent === 'explain') {
+                // محاولة شرح من الـ functions المخصصة
+                let explanation = await getScienceExplanation(detection.topic, textMessage);
+                if (!explanation) {
+                    explanation = await getMathExplanation(detection.operation, textMessage);
+                }
+                
+                if (explanation) {
+                    reply = explanation;
+                    session.mode = 'learning';
                 } else {
-                    reply = `👨‍🏫 خليني أشرحلك ببساطة. قولي عايز تفهم ايه بالضبط؟`;
+                    const aiReply = await chatWithAI(textMessage, session);
+                    if (aiReply) {
+                        reply = aiReply;
+                        session.mode = 'learning';
+                    } else {
+                        reply = "👨‍🏫 خليني أشرحلك ببساطة. قولي عايز تفهم ايه بالضبط؟";
+                    }
                 }
             }
             
-            else if (action === 'greeting') {
-                reply = directResponse || "😊 أهلاً بيك يا بطل! قولي عايز تتعلم ايه؟";
+            else if (detection.intent === 'practice') {
+                const question = generateQuestionByTopic(session);
+                reply = `${getMotivationalMessage(session.subject)}\n${question}`;
+                session.mode = 'question';
+            }
+            
+            else if (detection.intent === 'greeting') {
+                reply = detection.response || "😊 أهلاً بيك! قولي عايز تتعلم ايه؟";
             }
             
             else {
-                // general - رد عادي
-                const aiReply = await chatWithAI(textMessage, session);
-                if (aiReply) {
-                    reply = aiReply;
-                } else {
-                    reply = `👨‍🏫 قولي عايز تتعلم ايه؟ (رياضيات - علوم - عربي - إنجليزي)\nأو اكتب "اديني سؤال" عشان نبدأ تدريب`;
-                    session.hasStarted = true;
-                }
+                reply = `👨‍🏫 قولي عايز تتعلم ايه؟\n\nمتاح: رياضيات - علوم - عربي - إنجليزي\nأو اكتب "اديني سؤال" عشان نبدأ تدريب`;
             }
             
             if (!reply) {
-                reply = `${getMotivationalMessage()}\n${generateQuestionByTopic(session)}`;
+                reply = `${getMotivationalMessage(session.subject)}\n${generateQuestionByTopic(session)}`;
             }
             
             await sendWAPilotMessage(chatId, reply);
