@@ -7,46 +7,71 @@ const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 
-// ثبت موديل واحد بس
 const MODEL = 'google/gemini-2.0-flash-001';
 
-// نظام الـ Prompt الجديد
-const TEACHER_SYSTEM_PROMPT = `أنت مدرس صبور لطلاب المرحلة الإعدادية.
+// نظام اللعبة - شخصية قوية وجذابة
+const TEACHER_SYSTEM_PROMPT = `أنت "كابتن ماث" - مدرب أبطال الرياضيات 🦸‍♂️
 
-قواعدك:
-1. لا تعطي الإجابة النهائية مباشرة.
-2. اسأل الطالب سؤال بسيط يقوده للحل.
-3. لو الطالب أجاب بشكل صحيح → كمل للخطوة التالية.
-4. لو أخطأ → قوله "فكر تاني" أو "خلينا نعد صح" - متقلش ممتاز.
-5. لو قال "مش عارف" → أعطه hint بسيط.
-6. بعد محاولتين فاشلتين → اشرح الحل خطوة خطوة.
+شخصيتك:
+- مش مدرس عادي، انت كابتن فريق الأبطال
+- حماسي جداً، بتستخدم رموز 🔥💪🎮
+- بتعامل الطالب كلاعب بطل مش طالب عادي
 
-أسلوبك:
-- بسيط جدًا
-- باللهجة المصرية
-- تشجع الطالب
+قوانين اللعبة:
+1. كل مسألة = مستوى جديد (Level)
+2. الحل الصح = نقاط وخبرة
+3. الحل الغلط = فرصة تانية مع تعليق ذكي
+4. بعد كل 3 حلول صح = تحدي خاص 🏆
 
-ابدأ دايماً بـ: "يلا بينا يا بطل 👊"`;
+أسلوبك باللهجة المصرية:
+- "يلا بينا يا بطل 👊"
+- "جامد فشخخخ 🔥🔥"
+- "شكلك ناوي تبقى أسطورة 😎"
+- "قريب 👀 بس مستعجل ليه؟ جرب تاني"
 
-// تنظيف الرد - بس من الحاجات الغريبة، منغير ما نمسح الرد الأصلي
-function cleanResponse(text) {
-    // لو فيه كود برمجي
-    if (text.includes('```javascript') || text.includes('const ') && text.includes('function')) {
-        return "خلينا نركز على الشرح يا بطل 😊 قوللي فهمت الجزء اللي قلته؟";
+ممنوع تماماً:
+- الإجابة المباشرة
+- الكلام الرسمي الممل
+- التصحيح الجاف
+
+ابدأ كل محادثة بـ: "🎮 مرحباً بيك في أكاديمية الأبطال! أنا كابتن ماث. جهيز تبدأ المغامرة؟"`;
+
+// نظام التخزين لكل مستخدم
+const userStats = new Map(); // { level, score, streak, lastQuestion }
+
+function getUserStats(chatId) {
+    if (!userStats.has(chatId)) {
+        userStats.set(chatId, {
+            level: 1,
+            score: 0,
+            streak: 0,
+            questionsAnswered: 0,
+            correctAnswers: 0
+        });
     }
-    
-    // لو الرد فاضي
-    if (!text || text.trim().length < 5) {
-        return null;
-    }
-    
-    // غير كده نرجع الرد الأصلي
-    return text;
+    return userStats.get(chatId);
 }
 
-async function chatWithAI(message, conversationHistory = []) {
+function getLevelUpMessage(stats) {
+    if (stats.correctAnswers >= 3 && stats.level === 1) {
+        stats.level = 2;
+        return `\n\n🏆 مبروك! وصلت لـ Level 2!\n🔥 نقاطك: ${stats.score}\n💪 جهيز للتحدي الجاي؟`;
+    }
+    if (stats.correctAnswers >= 6 && stats.level === 2) {
+        stats.level = 3;
+        return `\n\n🎉 يا أسطورة! Level 3 بقى!\n⭐ نقاطك: ${stats.score}\n😎 ورينا تقدر توصل لكام؟`;
+    }
+    return '';
+}
+
+async function chatWithAI(message, conversationHistory = [], stats) {
     try {
         console.log(`🔄 Using model: ${MODEL}`);
+        
+        // نضيف معلومات المستوى في الـ context
+        const contextMessage = `[مستوى اللاعب: ${stats.level} | نقاط: ${stats.score} | إجابات صح متتالية: ${stats.streak}]
+        
+سؤال الطالب: ${message}`;
         
         const messages = [
             {
@@ -56,7 +81,7 @@ async function chatWithAI(message, conversationHistory = []) {
             ...conversationHistory,
             {
                 role: "user",
-                content: message
+                content: contextMessage
             }
         ];
         
@@ -65,7 +90,7 @@ async function chatWithAI(message, conversationHistory = []) {
             {
                 model: MODEL,
                 messages: messages,
-                temperature: 0.7,
+                temperature: 0.8, // زودنا الحرارة عشان يبقى أكثر إبداعاً
                 max_tokens: 600
             },
             {
@@ -81,16 +106,14 @@ async function chatWithAI(message, conversationHistory = []) {
         
         if (response.data?.choices?.[0]?.message?.content) {
             let reply = response.data.choices[0].message.content;
-            console.log(`📝 Original AI reply: ${reply.substring(0, 100)}...`);
             
-            const cleaned = cleanResponse(reply);
-            if (cleaned) {
-                console.log(`✅ Using cleaned reply`);
-                return cleaned;
-            } else {
-                console.log(`⚠️ Clean returned null, using original`);
-                return reply;
+            // نضيف الـ level up message لو الطالب كويس
+            const levelUpMsg = getLevelUpMessage(stats);
+            if (levelUpMsg) {
+                reply += levelUpMsg;
             }
+            
+            return reply;
         }
         
     } catch (error) {
@@ -100,35 +123,95 @@ async function chatWithAI(message, conversationHistory = []) {
     throw new Error('النموذج فشل');
 }
 
-function getFallbackReply(message) {
+// ردود احتياطية - بنظام اللعبة
+function getFallbackReply(message, stats) {
     const msg = message.toLowerCase().trim();
     
-    // لو طلب شرح الجمع
-    if (msg.includes('جمع') || msg.includes('شرح') && msg.includes('درس')) {
-        return `👊 يلا بينا يا بطل!
+    // التحقق من إجابة رقمية
+    const numberMatch = msg.match(/\d+/);
+    if (numberMatch && stats.lastQuestion) {
+        const answer = parseInt(numberMatch[0]);
+        
+        // مثال: لو السؤال كان عن جمع 15 + 20
+        if (stats.lastQuestion === '15+20' && answer === 35) {
+            stats.correctAnswers++;
+            stats.score += 10;
+            stats.streak++;
+            const levelUp = getLevelUpMessage(stats);
+            return `🔥🔥 جامد فشخخخ! إجابة صح!
 
-تعالى نلعب لعبة سريعة 😄
+نقاطك بقيت: ${stats.score}
+ضربت ${stats.streak} صح ورا بعض!
 
-لو معاك 2 تفاحة 🍎🍎
-وجبتلك كمان 3 تفاحات 🍎🍎🍎
+${levelUp || 'جهيز للتالي؟ 💪'}
 
-بقى عندك كام تفاحة؟`;
+عايز تحل مسألة أصعب شوية ولا نثبت اللي خدناه؟`;
+        } else if (stats.lastQuestion === '15+20') {
+            stats.streak = 0;
+            return `قريب 👀 بس شكلك مستعجل!
 
-    // لو سأل "انت مين"
-    } else if (msg.includes('انت مين') || msg.includes('who are you')) {
-        return `👨‍🏫 أنا مدرسك الخصوصي الصبور!
+جرب تعدهم واحدة واحدة:
+15... وبعدين نزود عليهم 20
 
-مهمتي إني أعلّمك مش أحللك المسائل. هخليك تفكر وتوصل للحل بنفسك خطوة بخطوة.
+وصلت لكام؟
 
-جهيز تبدأ؟ قوللي ايه اللي عايز تتعلمه`;
+(فكر فيها تاني وهتجيبه 💪)`;
+        }
     }
     
-    // أي سؤال تاني
-    return `👊 يلا بينا يا بطل!
+    // بداية اللعبة
+    if (msg.includes('جمع') || msg.includes('رياضيات') || msg.includes('نبدأ')) {
+        stats.lastQuestion = '15+20';
+        return `🎮 يلا بينا يا بطل!
 
-خلينا نبدأ بالتدريج. ايه المادة اللي عايز تذاكرها النهاردة؟
+دلوقتي دخلنا Level 1 🔥
 
-(رياضيات - علوم - عربي - إنجليزي)`;
+معاك 15 جنيه 💰
+ومامتك ادتك 20 كمان
+
+لو حسبتها صح → هتعدي الليفل 😏
+
+يلا وريني 💪
+كام بقى معاك؟`;
+    }
+    
+    if (msg.includes('انت مين')) {
+        return `🦸‍♂️ أنا كابتن ماث!
+
+مهمتي إني أخرج البطل جواك.
+
+هنا مش مجرد شرح - دي أكاديمية الأبطال 🎮
+
+كل إجابة صح = نقاط + مستويات
+كل إجابة غلط = فرصة تانية + تشجيع
+
+جهيز تبدأ الرحلة؟ 🔥`;
+    }
+    
+    if (msg.includes('مش عارف')) {
+        return `ماشي يا بطل 🤗
+
+خليني أسهلها عليك:
+
+15 جنيه... و20 جنيه...
+
+لو جمعنا الـ 10 الأولى مع بعض = 10 + 10 = 20
+وبعدين نضيف الـ 5 + 10 = 15
+
+كام الناتج النهائي؟
+
+جرب تاني وهتجيبهة 💪`;
+    }
+    
+    return `🎮 مرحباً بيك في أكاديمية الأبطال!
+
+أنا كابتن ماث 🦸‍♂️
+
+المستوى الحالي: ${stats.level}
+نقاطك: ${stats.score}
+
+جهيز تبدأ المغامرة؟
+اكتبلي "نبدأ" أو اسألني في أي حاجة 💪`;
 }
 
 async function sendWAPilotMessage(chatId, text) {
@@ -145,7 +228,6 @@ async function sendWAPilotMessage(chatId, text) {
     }
 }
 
-// تخزين المحادثات
 const conversationStore = new Map();
 
 module.exports = async (req, res) => {
@@ -160,11 +242,13 @@ module.exports = async (req, res) => {
         return res.status(200).send(`
             <!DOCTYPE html>
             <html dir="rtl">
-            <head><title>بوت المدرس الصبور</title></head>
-            <body style="font-family: Arial; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
-                <h1>👨‍🏫 بوت المدرس الصبور</h1>
-                <p>✅ شغال - أسلوب تعليمي تفاعلي</p>
-                <p>🎯 جرب تسأل: "اشرحلي الجمع"</p>
+            <head><title>أكاديمية الأبطال - كابتن ماث</title></head>
+            <body style="font-family: Arial; text-align: center; padding: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                <h1>🦸‍♂️ أكاديمية الأبطال</h1>
+                <h2>كابتن ماث في خدمتك!</h2>
+                <p>✅ النظام شغال - اكتب "نبدأ" عشان تبدأ المغامرة</p>
+                <p>🎯 كل إجابة صح = نقاط ومستويات</p>
+                <p>🏆 أول Level 3 ياخد شهادة تقدير!</p>
             </body>
             </html>
         `);
@@ -185,32 +269,41 @@ module.exports = async (req, res) => {
         console.log(`📨 Received: "${textMessage}" from ${chatId}`);
         
         if (textMessage && textMessage.trim()) {
-            let userSession = conversationStore.get(chatId) || { history: [], failCount: 0 };
+            let userSession = conversationStore.get(chatId) || { history: [] };
+            let stats = getUserStats(chatId);
             
             if (OPENROUTER_API_KEY) {
                 try {
-                    const reply = await chatWithAI(textMessage, userSession.history);
+                    const reply = await chatWithAI(textMessage, userSession.history, stats);
                     await sendWAPilotMessage(chatId, reply);
                     
-                    // تحديث تاريخ المحادثة
                     userSession.history.push({ role: "user", content: textMessage });
                     userSession.history.push({ role: "assistant", content: reply });
                     if (userSession.history.length > 20) {
                         userSession.history = userSession.history.slice(-20);
                     }
                     conversationStore.set(chatId, userSession);
+                    userStats.set(chatId, stats);
                     
                 } catch (error) {
                     console.error('AI Error:', error);
-                    const fallback = getFallbackReply(textMessage);
+                    const fallback = getFallbackReply(textMessage, stats);
                     await sendWAPilotMessage(chatId, fallback);
+                    userStats.set(chatId, stats);
                 }
             } else {
-                const fallback = getFallbackReply(textMessage);
+                const fallback = getFallbackReply(textMessage, stats);
                 await sendWAPilotMessage(chatId, fallback);
+                userStats.set(chatId, stats);
             }
         } else {
-            await sendWAPilotMessage(chatId, "👨‍🏫 أهلاً بيك يا بطل! اكتبلي أي سؤال وهاخد معاك خطوة خطوة لحد ما تفهم بنفسك 💪");
+            const stats = getUserStats(chatId);
+            await sendWAPilotMessage(chatId, `🦸‍♂️ أهلاً بيك في أكاديمية الأبطال يا بطل!
+
+المستوى: ${stats.level}
+نقاطك: ${stats.score}
+
+اكتبلي "نبدأ" عشان نبدأ المغامرة 💪`);
         }
         
         return res.status(200).json({ ok: true });
