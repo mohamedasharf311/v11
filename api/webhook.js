@@ -1,16 +1,23 @@
 // api/webhook.js
 const axios = require('axios');
 
-// --- إعدادات WAPILOT ---
 const INSTANCE_ID = "instance3532";
 const WAPILOT_TOKEN = "yzWzEjmxZpbifuOx6lWafYT3Ng69gaFpJGAdTsVc6N";
 const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
 
-// --- إعدادات OpenRouter ---
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 
-// --- الـ Prompt التعليمي ---
-const SYSTEM_PROMPT = `أنت مدرس صبور لطلاب المرحلة الإعدادية.
+// قائمة النماذج المجانية (هنحاول نستخدم أول واحد شغال)
+const MODELS = [
+    'google/gemini-2.0-flash-001',
+    'qwen/qwen-2.5-7b-instruct',      // Qwen 7B - الأفضل للعربي
+    'qwen/qwen-2.5-3b-instruct',      // Qwen 3B - أسرع
+    'google/gemini-2.0-flash-001',    // Gemini 2.0 Flash
+    'meta-llama/llama-3.2-3b-instruct' // Llama 3.2
+];
+
+// نظام الـ Prompt بتاع المدرس الصبور
+const TEACHER_SYSTEM_PROMPT = `أنت مدرس صبور لطلاب المرحلة الإعدادية.
 
 قواعدك:
 1. لا تعطي الإجابة النهائية مباشرة.
@@ -25,45 +32,40 @@ const SYSTEM_PROMPT = `أنت مدرس صبور لطلاب المرحلة الإ
 - باللهجة المصرية
 - تشجع الطالب
 
-تخصصك: مساعدة الطلاب في فهم المسائل وحلها بأنفسهم. أنت مش بتدي الإجابة، أنت بتفهمهم.`;
+تذكر: دورك إنك تعلّم مش تحل بداله. خلي الطالب يفكر ويوصل للحل بنفسه!`;
 
-// قائمة النماذج المجانية (هنحاول نستخدم أول واحد شغال)
-const MODELS = [
-    'qwen/qwen-2.5-7b-instruct',      // Qwen 7B - الأفضل للعربي
-    'qwen/qwen-2.5-3b-instruct',      // Qwen 3B - أسرع
-    'google/gemini-2.0-flash-001',    // Gemini 2.0 Flash
-    'meta-llama/llama-3.2-3b-instruct' // Llama 3.2
-];
-
-// --- دالة المحادثة مع الذكاء الاصطناعي (مع الـ Prompt التعليمي) ---
-async function chatWithAI(message) {
+async function chatWithAI(message, conversationHistory = []) {
     for (const model of MODELS) {
         try {
             console.log(`🔄 Trying model: ${model}`);
+            
+            // بناء تاريخ المحادثة مع system prompt
+            const messages = [
+                {
+                    role: "system",
+                    content: TEACHER_SYSTEM_PROMPT
+                },
+                ...conversationHistory,
+                {
+                    role: "user",
+                    content: message
+                }
+            ];
             
             const response = await axios.post(
                 'https://openrouter.ai/api/v1/chat/completions',
                 {
                     model: model,
-                    messages: [
-                        {
-                            role: "system",
-                            content: SYSTEM_PROMPT  // ✅ الـ Prompt التعليمي
-                        },
-                        {
-                            role: "user",
-                            content: message
-                        }
-                    ],
+                    messages: messages,
                     temperature: 0.7,
-                    max_tokens: 600
+                    max_tokens: 500
                 },
                 {
                     headers: {
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
                         'HTTP-Referer': 'https://school-gamma-ten.vercel.app',
-                        'X-Title': 'Educational Bot - مدرس إعدادية'
+                        'X-Title': 'WhatsApp OCR Bot'
                     },
                     timeout: 20000
                 }
@@ -82,11 +84,9 @@ async function chatWithAI(message) {
     throw new Error('كل النماذج فشلت');
 }
 
-// --- رد احتياطي لو الذكاء الاصطناعي مش شغال ---
 function getFallbackReply(message) {
     const msg = message.toLowerCase().trim();
     
-    // عمليات حسابية
     const mathMatch = msg.match(/(\d+)\s*([\+\-\*\/])\s*(\d+)/);
     if (mathMatch) {
         const num1 = parseInt(mathMatch[1]);
@@ -99,29 +99,24 @@ function getFallbackReply(message) {
             case '*': result = num1 * num2; break;
             case '/': result = num2 !== 0 ? (num1 / num2).toFixed(2) : 'مينفعش نقسم على صفر'; break;
         }
-        return `🧮 ${num1} ${op} ${num2} = ${result}\n\n*دي الإجابة المباشرة، لكن الأفضل تفهم إزاي جت!*`;
+        return `${num1} ${op} ${num2} = ${result}`;
     }
     
     const replies = {
-        'اهلا': 'أهلاً بيك يا بطل! 👋 أنا مدرسك الخاص. قولي السؤال اللي مش فاهمه وأنا هساعدك تفهمه بنفسك.',
-        'مرحبا': 'مرحباً! مستعد تتعلم حاجة جديدة؟ 🧑‍🏫',
-        'السلام عليكم': 'وعليكم السلام ورحمة الله وبركاته! قولي يا بطل، فيه حاجة مش فاهمها؟',
-        'عامل ايه': 'الحمد لله تمام! جاهز أساعدك تتعلم. إنت قولي، فيه سؤال محتاج تفهمه؟',
-        'انت مين': 'أنا مدرسك الخاص 🤖 متخصص في مساعدة طلاب الإعدادية. مش بديلك الإجابة، لكني بخليك تفهمها بنفسك! 💪',
-        'بتعرف تعمل ايه': 'أنا متخصص في شرح المسائل لطلاب الإعدادية. بسألك أسئلة تخليك توصل للحل بنفسك. متعة الفهم أحلى من الإجابة الجاهزة! 🎓',
-        'اخبارك': 'كويس الحمد لله! جاهز نبدأ نفهم سؤال جديد؟',
-        'شكرا': 'العفو يا بطل! أنا موجود عشان أساعدك 🙌',
-        'تمام': 'ممتاز! خلينا نشوف سؤال تاني تفهمه 👏',
+        'اهلا': 'أهلاً بيك يا باشا! 👋 أنا مدرسك الصبور، جهيز أساعدك تتعلم أي حاجة. ايه السؤال النهاردة؟',
+        'عامل ايه': 'الحمد لله تمام! يلا بينا نذاكر. ايه اللي عايز تتعلمه النهاردة؟',
+        'انت مين': 'أنا مدرسك الخصوصي 🤓 مهمتي إني أعلّمك مش أحللك المسائل. هخليك تفكر وتوصل للحل بنفسك!',
+        'اخبارك': 'كويس الحمد لله! متحمس أعلّمك حاجات جديدة. وريني تقدر تعمل ايه!',
+        'مش عارف': 'ماشي يا حبيبي، خليني أساعدك شوية. فكر معايا خطوة بخطوة وهتوصل لحلها إن شاء الله 🤗',
     };
     
     for (const [key, value] of Object.entries(replies)) {
         if (msg.includes(key)) return value;
     }
     
-    return `🎓 *أهلاً بيك في بوت التعليم!*\n\nأنا هنا عشان أفهمك مش أديك الإجابة.\n\nقولي السؤال اللي مش فاهمه، وأنا هسألك أسئلة تخليك تفهمه بنفسك.\n\nمثال:\n- "ازاي نحسب مساحة المستطيل؟"\n- "يعني إيه عدد أولي؟"\n- "ازاي أعرف الفاعل في الجملة؟"`;
+    return `معرفش الصراحة 🤔 بس أنا هنا عشان أعلّمك مش أجاوبك بس!\n\nجرب تسألني سؤال في مادة معينة (رياضيات، علوم، عربي، إنجليزي) وهاخد معاك خطوة بخطوة لحد ما تفهم.`;
 }
 
-// --- دالة إرسال رسالة عبر WAPILOT ---
 async function sendWAPilotMessage(chatId, text) {
     try {
         await axios.post(
@@ -129,136 +124,38 @@ async function sendWAPilotMessage(chatId, text) {
             { chat_id: chatId, text: text },
             { headers: { "token": WAPILOT_TOKEN, "Content-Type": "application/json" }, timeout: 10000 }
         );
-        console.log('✅ Message sent');
         return true;
     } catch (error) {
-        console.error('❌ Send Error:', error.message);
+        console.error('Error sending message:', error.message);
         return false;
     }
 }
 
-// =============================================
-// الدالة الرئيسية
-// =============================================
+// تخزين بسيط للمحادثات (في الذاكرة مؤقتًا)
+const conversationStore = new Map();
+
 module.exports = async (req, res) => {
     const url = req.url || '';
     const method = req.method || 'GET';
     
-    // Webhook Verification
     if (method === 'GET' && url === '/api/webhook') {
-        return res.status(200).json({ 
-            status: 'active',
-            openrouter: !!OPENROUTER_API_KEY,
-            models: MODELS,
-            prompt: 'مدرس إعدادية صبور'
-        });
+        return res.status(200).json({ status: 'active' });
     }
 
-    // الصفحة الرئيسية
     if (method === 'GET' && (url === '/' || url === '')) {
         return res.status(200).send(`
             <!DOCTYPE html>
             <html dir="rtl">
-            <head>
-                <title>مدرس الإعدادية - بوت تعليمي</title>
-                <style>
-                    body { 
-                        font-family: Arial; 
-                        text-align: center; 
-                        padding: 50px; 
-                        background: linear-gradient(135deg, #1e3c72, #2a5298); 
-                        color: white; 
-                        min-height: 100vh;
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                    }
-                    .container {
-                        background: rgba(255,255,255,0.1);
-                        backdrop-filter: blur(10px);
-                        border-radius: 24px;
-                        padding: 40px;
-                        max-width: 600px;
-                        border: 1px solid rgba(255,255,255,0.2);
-                    }
-                    h1 { 
-                        color: #ffd700; 
-                        margin-bottom: 10px;
-                        font-size: 2.5rem;
-                    }
-                    .status { 
-                        display: inline-block; 
-                        padding: 8px 20px; 
-                        border-radius: 50px; 
-                        margin: 10px 5px;
-                        font-weight: bold;
-                    }
-                    .online { background: #10b981; color: white; }
-                    .offline { background: #ef4444; color: white; }
-                    .prompt-box {
-                        background: rgba(0,0,0,0.3);
-                        border-radius: 16px;
-                        padding: 20px;
-                        margin: 30px 0;
-                        text-align: right;
-                        border-left: 4px solid #ffd700;
-                    }
-                    .prompt-box h3 {
-                        color: #ffd700;
-                        margin-bottom: 15px;
-                    }
-                    .prompt-box p {
-                        line-height: 1.8;
-                        margin: 5px 0;
-                    }
-                    .feature {
-                        display: inline-block;
-                        background: rgba(255,215,0,0.2);
-                        padding: 5px 12px;
-                        border-radius: 20px;
-                        margin: 5px;
-                        font-size: 0.9rem;
-                    }
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <h1>🧑‍🏫 مدرس الإعدادية</h1>
-                    <p style="font-size: 1.2rem; color: #e0e0e0;">مش بيديك الإجابة... بيفهمك إزاي توصلها!</p>
-                    
-                    <div>
-                        <span class="status ${OPENROUTER_API_KEY ? 'online' : 'offline'}">🤖 الذكاء الاصطناعي: ${OPENROUTER_API_KEY ? 'متصل' : 'غير متصل'}</span>
-                        <span class="status online">📱 واتساب: متصل</span>
-                    </div>
-                    
-                    <div class="prompt-box">
-                        <h3>📋 قواعد المدرس:</h3>
-                        <p>✅ ما يعطيش الإجابة مباشرة</p>
-                        <p>✅ يسأل أسئلة تقود الطالب للحل</p>
-                        <p>✅ لو الطالب أجاب صح → يكمل</p>
-                        <p>✅ لو أخطأ → يبسّط السؤال</p>
-                        <p>✅ لو قال "مش عارف" → يديله hint</p>
-                        <p>✅ بعد محاولتين → يشرح الحل خطوة بخطوة</p>
-                    </div>
-                    
-                    <div>
-                        <span class="feature">🗣️ لهجة مصرية</span>
-                        <span class="feature">🎯 صبور</span>
-                        <span class="feature">🏆 يشجع الطالب</span>
-                        <span class="feature">📚 للمرحلة الإعدادية</span>
-                    </div>
-                    
-                    <p style="margin-top: 30px; opacity: 0.8;">
-                        📱 جرب البوت على واتساب: <strong>+20 119 383 101</strong><br>
-                        اكتب سؤالك وهو هيساعدك تفهمه
-                    </p>
-                </div>
+            <head><title>بوت المدرس الصبور</title></head>
+            <body style="font-family: Arial; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
+                <h1>👨‍🏫 بوت المدرس الصبور</h1>
+                <p>✅ شغال مع OpenRouter - أسلوب تعليمي تفاعلي</p>
+                <p>🎯 مهمتي: أعلّمك مش أحللك المسائل!</p>
             </body>
             </html>
         `);
     }
 
-    // استقبال رسائل واتساب
     if (method === 'POST' && url === '/api/webhook') {
         const data = req.body;
         let rawChatId = null, textMessage = null;
@@ -271,18 +168,25 @@ module.exports = async (req, res) => {
         if (!rawChatId) return res.status(200).json({ ok: false });
         let chatId = rawChatId.includes('@') ? rawChatId : `${rawChatId}@c.us`;
         
-        console.log(`📱 From: ${chatId} | Message: "${textMessage}"`);
-        
         if (textMessage && textMessage.trim()) {
+            // جلب تاريخ المحادثة لهذا المستخدم
+            let conversationHistory = conversationStore.get(chatId) || [];
+            
             if (OPENROUTER_API_KEY) {
                 try {
-                    // إرسال "بيتكلم..." مؤقت
-                    await sendWAPilotMessage(chatId, "🧑‍🏫 *المدرس بيفكر...*");
-                    
-                    const reply = await chatWithAI(textMessage);
+                    const reply = await chatWithAI(textMessage, conversationHistory);
                     await sendWAPilotMessage(chatId, reply);
+                    
+                    // تحديث تاريخ المحادثة (آخر 10 رسائل عشان نحافظ على الذاكرة)
+                    conversationHistory.push({ role: "user", content: textMessage });
+                    conversationHistory.push({ role: "assistant", content: reply });
+                    if (conversationHistory.length > 20) {
+                        conversationHistory = conversationHistory.slice(-20);
+                    }
+                    conversationStore.set(chatId, conversationHistory);
+                    
                 } catch (error) {
-                    console.log('⚠️ AI failed, using fallback');
+                    console.error('AI Error:', error);
                     const fallback = getFallbackReply(textMessage);
                     await sendWAPilotMessage(chatId, fallback);
                 }
@@ -291,7 +195,7 @@ module.exports = async (req, res) => {
                 await sendWAPilotMessage(chatId, fallback);
             }
         } else {
-            await sendWAPilotMessage(chatId, "🧑‍🏫 *أهلاً بيك!*\n\nأنا مدرسك الخاص. قولي السؤال اللي مش فاهمه وأنا هساعدك تفهمه بنفسك. 💪");
+            await sendWAPilotMessage(chatId, "👨‍🏫 أهلاً بيك يا بطل! أنا مدرسك الصبور. اكتبلي أي سؤال في المنهج وهاخد معاك خطوة خطوة لحد ما تفهمه بنفسك. يلا بينا نبدأ!");
         }
         
         return res.status(200).json({ ok: true });
