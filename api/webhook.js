@@ -9,35 +9,37 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 
 const MODEL = 'google/gemini-2.0-flash-001';
 
-// نظام اللعبة - شخصية قوية وجذابة
-const TEACHER_SYSTEM_PROMPT = `أنت "كابتن ماث" - مدرب أبطال الرياضيات 🦸‍♂️
+// شخصية متوازنة: حماستها ذكية + تعليم عميق + متابعة
+const TEACHER_SYSTEM_PROMPT = `أنت "كابتن ماث" - مدرب مهارات الرياضيات 🎯
 
 شخصيتك:
-- مش مدرس عادي، انت كابتن فريق الأبطال
-- حماسي جداً، بتستخدم رموز 🔥💪🎮
-- بتعامل الطالب كلاعب بطل مش طالب عادي
+- حماسك ذكي مش أوفر (ممنوع "جامد فشخخخ" أو "يا جدع")
+- بتتكلم باحترام: "أداء قوي" / "ممتاز" / "واضح إنك فهمت"
+- بتهتم إن الطالب يفهم "ازاي" مش "ايه"
 
 قوانين اللعبة:
-1. كل مسألة = مستوى جديد (Level)
-2. الحل الصح = نقاط وخبرة
-3. الحل الغلط = فرصة تانية مع تعليق ذكي
-4. بعد كل 3 حلول صح = تحدي خاص 🏆
+1. كل إجابة صح → نقاط + تشجيع محترم
+2. كل 3 إجابات صح → سؤال فهم عميق ("ازاي جبت الناتج؟")
+3. الغلط → تصحيح لطيف + hint
+4. نهاية كل جلسة → اقتراح متابعة (5 دقائق يومياً)
 
 أسلوبك باللهجة المصرية:
-- "يلا بينا يا بطل 👊"
-- "جامد فشخخخ 🔥🔥"
-- "شكلك ناوي تبقى أسطورة 😎"
-- "قريب 👀 بس مستعجل ليه؟ جرب تاني"
+- "🔥 أداء قوي يا بطل!"
+- "واضح إنك بدأت تفهم الفكرة صح 💪"
+- "خليني أسألك سؤال مهم عشان نتأكد..."
+- "بصراحة مستواك كويس جداً 👀"
 
-ممنوع تماماً:
-- الإجابة المباشرة
-- الكلام الرسمي الممل
-- التصحيح الجاف
+ممنوع:
+- أوفر في الحماس (جامد فشخخخ)
+- إجابة مباشرة
+- نهاية مفتوحة (دائماً خلّي في اقتراح للمتابعة)
 
-ابدأ كل محادثة بـ: "🎮 مرحباً بيك في أكاديمية الأبطال! أنا كابتن ماث. جهيز تبدأ المغامرة؟"`;
+في آخر كل موضوع → اسأل:
+"تحب أعملك برنامج 5 دقائق كل يوم يخليك أسرع واحد في الفصل؟ 😎"`;
 
-// نظام التخزين لكل مستخدم
-const userStats = new Map(); // { level, score, streak, lastQuestion }
+// نظام التخزين المتقدم
+const userStats = new Map(); 
+// { level, score, streak, deepQuestionsAsked, lastActive, dailyProgress }
 
 function getUserStats(chatId) {
     if (!userStats.has(chatId)) {
@@ -45,8 +47,11 @@ function getUserStats(chatId) {
             level: 1,
             score: 0,
             streak: 0,
-            questionsAnswered: 0,
-            correctAnswers: 0
+            correctAnswers: 0,
+            deepQuestionsAsked: 0,
+            lastActive: new Date().toISOString(),
+            dailyProgress: [],
+            subscriptionRequested: false  // عشان منكررش الطلب كل مرة
         });
     }
     return userStats.get(chatId);
@@ -55,21 +60,29 @@ function getUserStats(chatId) {
 function getLevelUpMessage(stats) {
     if (stats.correctAnswers >= 3 && stats.level === 1) {
         stats.level = 2;
-        return `\n\n🏆 مبروك! وصلت لـ Level 2!\n🔥 نقاطك: ${stats.score}\n💪 جهيز للتحدي الجاي؟`;
+        return `\n\n🏆 مبروك! وصلت لـ Level 2!\n⭐ نقاطك: ${stats.score}\n\nخليني أسألك سؤال مهم يا بطل 👀:\nلما بنجمع أرقام زي 15 + 20، بتفكر فيها ازاي في دماغك؟ (بتعدي؟ ولا بتجمع العشرات first؟)`;
     }
     if (stats.correctAnswers >= 6 && stats.level === 2) {
         stats.level = 3;
-        return `\n\n🎉 يا أسطورة! Level 3 بقى!\n⭐ نقاطك: ${stats.score}\n😎 ورينا تقدر توصل لكام؟`;
+        return `\n\n🎉 أداء قوي جداً! Level 3 بقى!\n🏅 نقاطك: ${stats.score}\n\nبصراحة مستواك بدأ يبقى كويس 👀\nعايز تقولي إيه أكتر حاجة بتساعدك تفهم المسائل بسرعة؟`;
     }
     return '';
+}
+
+function getDailyChallenge() {
+    const challenges = [
+        { question: "لو معاك 45 جنيه وصاحبك اديك 28 جنيه، كده بقى معاك كام؟", answer: 73 },
+        { question: "في الفصل 12 بنت و 15 ولد، كده عدد الطلاب كلهم كام؟", answer: 27 },
+        { question: "اشتريت كتاب ب 35 جنيه وقلم ب 12 جنيه، كده كلفوني كام؟", answer: 47 }
+    ];
+    return challenges[Math.floor(Math.random() * challenges.length)];
 }
 
 async function chatWithAI(message, conversationHistory = [], stats) {
     try {
         console.log(`🔄 Using model: ${MODEL}`);
         
-        // نضيف معلومات المستوى في الـ context
-        const contextMessage = `[مستوى اللاعب: ${stats.level} | نقاط: ${stats.score} | إجابات صح متتالية: ${stats.streak}]
+        const contextMessage = `[مستوى اللاعب: ${stats.level} | نقاط: ${stats.score} | إجابات صح متتالية: ${stats.streak} | تم طرح أسئلة فهم عميق: ${stats.deepQuestionsAsked}]
         
 سؤال الطالب: ${message}`;
         
@@ -90,8 +103,8 @@ async function chatWithAI(message, conversationHistory = [], stats) {
             {
                 model: MODEL,
                 messages: messages,
-                temperature: 0.8, // زودنا الحرارة عشان يبقى أكثر إبداعاً
-                max_tokens: 600
+                temperature: 0.7,
+                max_tokens: 650
             },
             {
                 headers: {
@@ -107,10 +120,10 @@ async function chatWithAI(message, conversationHistory = [], stats) {
         if (response.data?.choices?.[0]?.message?.content) {
             let reply = response.data.choices[0].message.content;
             
-            // نضيف الـ level up message لو الطالب كويس
             const levelUpMsg = getLevelUpMessage(stats);
             if (levelUpMsg) {
                 reply += levelUpMsg;
+                stats.deepQuestionsAsked++;
             }
             
             return reply;
@@ -123,95 +136,113 @@ async function chatWithAI(message, conversationHistory = [], stats) {
     throw new Error('النموذج فشل');
 }
 
-// ردود احتياطية - بنظام اللعبة
+// ردود احتياطية متوازنة
 function getFallbackReply(message, stats) {
     const msg = message.toLowerCase().trim();
     
-    // التحقق من إجابة رقمية
     const numberMatch = msg.match(/\d+/);
     if (numberMatch && stats.lastQuestion) {
         const answer = parseInt(numberMatch[0]);
         
-        // مثال: لو السؤال كان عن جمع 15 + 20
         if (stats.lastQuestion === '15+20' && answer === 35) {
             stats.correctAnswers++;
             stats.score += 10;
             stats.streak++;
             const levelUp = getLevelUpMessage(stats);
-            return `🔥🔥 جامد فشخخخ! إجابة صح!
+            
+            let reply = `🔥 أداء قوي يا بطل!
 
-نقاطك بقيت: ${stats.score}
-ضربت ${stats.streak} صح ورا بعض!
+✅ إجابة صح! نقاطك بقيت: ${stats.score}
+📊 ضربت ${stats.streak} صح ورا بعض!
 
-${levelUp || 'جهيز للتالي؟ 💪'}
+${levelUp || ''}
 
-عايز تحل مسألة أصعب شوية ولا نثبت اللي خدناه؟`;
+عايز تحل مسألة أصعب شوية ولا نراجع اللي خدناه؟ 💪`;
+            
+            // لو خلص Level 2، نطلب اشتراك
+            if (stats.level >= 2 && !stats.subscriptionRequested) {
+                stats.subscriptionRequested = true;
+                reply += `\n\n━━━━━━━━━━━━━━━━\n👀 بصراحة مستواك كويس جداً!\n\nتحب أعملك برنامج 5 دقائق كل يوم يخليك أسرع واحد في الفصل في الحساب؟ 😎\n\nلو مهتم، قولي "أنا موافق" وهبدأ معاك بكرة من Level جديد!`;
+            }
+            
+            return reply;
+            
         } else if (stats.lastQuestion === '15+20') {
             stats.streak = 0;
-            return `قريب 👀 بس شكلك مستعجل!
+            return `قريب 👀 بس خلينا نفهمها صح:
 
-جرب تعدهم واحدة واحدة:
-15... وبعدين نزود عليهم 20
+15 + 20 = (10 + 10) + (5 + 10) = 20 + 15 = 35
 
-وصلت لكام؟
+الفكرة: بنجمع العشرات مع بعض، والآحاد مع بعض.
 
-(فكر فيها تاني وهتجيبه 💪)`;
+جرب تحل دلوقتي: 25 + 13 = كام؟ 💪`;
         }
     }
     
-    // بداية اللعبة
+    // بداية متوازنة
     if (msg.includes('جمع') || msg.includes('رياضيات') || msg.includes('نبدأ')) {
         stats.lastQuestion = '15+20';
-        return `🎮 يلا بينا يا بطل!
+        return `🎯 يلا بينا يا بطل!
 
-دلوقتي دخلنا Level 1 🔥
+📊 المستوى الحالي: ${stats.level}
+⭐ نقاطك: ${stats.score}
+
+التحدي الأول Level ${stats.level} 🔥:
 
 معاك 15 جنيه 💰
 ومامتك ادتك 20 كمان
 
-لو حسبتها صح → هتعدي الليفل 😏
+كام بقى معاك؟
 
-يلا وريني 💪
-كام بقى معاك؟`;
+فكر فيها كويس وقولي الرقم 💪`;
+    }
+    
+    if (msg.includes('انا موافق')) {
+        return `🎉 ممتاز! أنت دلوقتي في برنامج "5 دقائق أبطال الحساب" 🏆
+
+📅 هنبدأ بكرة الصبح
+⏰ هبعتلك تحدي每一天 5 دقائق بس
+📊 هتتابع تقدمك يومياً
+
+جهيز تبدأ بكرة؟ 👀`;
     }
     
     if (msg.includes('انت مين')) {
-        return `🦸‍♂️ أنا كابتن ماث!
+        return `🎯 أنا "كابتن ماث" - مدرب مهارات الرياضيات.
 
-مهمتي إني أخرج البطل جواك.
+مهمتي مش إن أحلك المسائل، لا… مهمتي إنك تبقى أنت اللي تحلها بسرعة وذكاء.
 
-هنا مش مجرد شرح - دي أكاديمية الأبطال 🎮
-
-كل إجابة صح = نقاط + مستويات
-كل إجابة غلط = فرصة تانية + تشجيع
+📊 نظامي:
+• مستويات متدرجة
+• نقاط وخبرة
+• أسئلة تفهمك "ازاي" تفكر
 
 جهيز تبدأ الرحلة؟ 🔥`;
     }
     
     if (msg.includes('مش عارف')) {
-        return `ماشي يا بطل 🤗
+        return `ماشي يا بطل 🤗 خلينا نفهمها بطريقة تانية:
 
-خليني أسهلها عليك:
+15 + 20 = ?
 
-15 جنيه... و20 جنيه...
+فكر فيها: 15 = 10 + 5
+20 = 10 + 10
 
-لو جمعنا الـ 10 الأولى مع بعض = 10 + 10 = 20
-وبعدين نضيف الـ 5 + 10 = 15
+نجمع العشرات: 10 + 10 + 10 = 30
+نجمع الآحاد: 5
+المجموع: 30 + 5 = 35
 
-كام الناتج النهائي؟
-
-جرب تاني وهتجيبهة 💪`;
+واضحة ولا أحاول تاني بطريقة مختلفة؟ 💪`;
     }
     
-    return `🎮 مرحباً بيك في أكاديمية الأبطال!
+    // لو فضل ساكت أو أي حاجة تانية
+    return `🎯 مرحباً بيك في أكاديمية كابتن ماث!
 
-أنا كابتن ماث 🦸‍♂️
+📊 مستواك الحالي: ${stats.level}
+⭐ نقاطك: ${stats.score}
 
-المستوى الحالي: ${stats.level}
-نقاطك: ${stats.score}
-
-جهيز تبدأ المغامرة؟
-اكتبلي "نبدأ" أو اسألني في أي حاجة 💪`;
+جهيز تبدأ؟
+اكتبلي "نبدأ" وهنبدأ أول تحدي 💪`;
 }
 
 async function sendWAPilotMessage(chatId, text) {
@@ -242,13 +273,13 @@ module.exports = async (req, res) => {
         return res.status(200).send(`
             <!DOCTYPE html>
             <html dir="rtl">
-            <head><title>أكاديمية الأبطال - كابتن ماث</title></head>
+            <head><title>أكاديمية كابتن ماث</title></head>
             <body style="font-family: Arial; text-align: center; padding: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
-                <h1>🦸‍♂️ أكاديمية الأبطال</h1>
-                <h2>كابتن ماث في خدمتك!</h2>
-                <p>✅ النظام شغال - اكتب "نبدأ" عشان تبدأ المغامرة</p>
-                <p>🎯 كل إجابة صح = نقاط ومستويات</p>
-                <p>🏆 أول Level 3 ياخد شهادة تقدير!</p>
+                <h1>🎯 أكاديمية كابتن ماث</h1>
+                <h2>مدرب مهارات الرياضيات</h2>
+                <p>✅ نظام متوازن: تعليم عميق + تشجيع ذكي</p>
+                <p>📊 مستويات - نقاط - تقدم يومي</p>
+                <p>🔥 اكتب "نبدأ" عشان تبدأ الرحلة</p>
             </body>
             </html>
         `);
@@ -271,6 +302,7 @@ module.exports = async (req, res) => {
         if (textMessage && textMessage.trim()) {
             let userSession = conversationStore.get(chatId) || { history: [] };
             let stats = getUserStats(chatId);
+            stats.lastActive = new Date().toISOString();
             
             if (OPENROUTER_API_KEY) {
                 try {
@@ -298,12 +330,15 @@ module.exports = async (req, res) => {
             }
         } else {
             const stats = getUserStats(chatId);
-            await sendWAPilotMessage(chatId, `🦸‍♂️ أهلاً بيك في أكاديمية الأبطال يا بطل!
+            await sendWAPilotMessage(chatId, `🎯 مرحباً بيك في أكاديمية كابتن ماث!
 
-المستوى: ${stats.level}
-نقاطك: ${stats.score}
+📊 المستوى: ${stats.level}
+⭐ نقاطك: ${stats.score}
+📅 آخر زيارة: ${stats.lastActive ? new Date(stats.lastActive).toLocaleDateString('ar-EG') : 'أول مرة'}
 
-اكتبلي "نبدأ" عشان نبدأ المغامرة 💪`);
+اكتبلي "نبدأ" عشان نبدأ أول تحدي 💪
+
+ولو غبت عن المتابعة، أنا هاجي أسأل عليك 👀`);
         }
         
         return res.status(200).json({ ok: true });
