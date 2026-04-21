@@ -7,219 +7,128 @@ const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 
-const MODEL = 'google/gemini-2.0-flash-001';
+// قائمة النماذج المجانية
+const MODELS = [
+    'google/gemini-2.0-flash-001',
+    'qwen/qwen-2.5-7b-instruct',
+    'qwen/qwen-2.5-3b-instruct',
+    'meta-llama/llama-3.2-3b-instruct'
+];
 
-// نظام الحالات (State Machine)
-const MODES = {
-    ONBOARDING: 'onboarding',  // أول مرة بس
-    LEARNING: 'learning',      // بيشرحله حاجة
-    QUESTION: 'question',      // سأله سؤال وبيستنى إجابة
-    GAME: 'game'              // وضع التحدي
-};
+// الـ Prompt بتاع المدرس الصبور (مدرس عام مش متخصص)
+const TEACHER_SYSTEM_PROMPT = `أنت مدرس صبور لطلاب المرحلة الإعدادية.
 
-const TEACHER_SYSTEM_PROMPT = `أنت "كابتن ماث" - مدرب مهارات الرياضيات 🎯
-
-شخصيتك:
-- حماسك ذكي مش أوفر
-- بتهتم إن الطالب يفهم "ازاي" مش "ايه"
-- دايمًا بترد على إجابات الطالب مباشرة
-
-قوانينك الصارمة:
-1. لو الطالب جاوب على سؤال → صحح له فورًا (غلط أو صح)
-2. مفيش حاجة اسمها "اكتب نبدأ" بعد ما بدأنا
-3. خلي flow المحادثة مستمر
-4. لو الطالب غلط → قوله "قريب 👀 تعالى نعدهم سوا"
+قواعدك:
+1. لا تعطي الإجابة النهائية مباشرة.
+2. اسأل الطالب سؤال بسيط يقوده للحل.
+3. لو الطالب أجاب بشكل صحيح → كمل للخطوة التالية.
+4. لو أخطأ → بسّط السؤال أكثر.
+5. لو قال "مش عارف" → أعطه hint بسيط وليس الحل.
+6. بعد محاولتين فاشلتين → اشرح الحل خطوة خطوة.
 
 أسلوبك:
-- "🔥 أداء قوي!"
-- "قريب 👀 تعالى نعدهم سوا"
-- "ممتاز! 👍"
+- بسيط جدًا
+- باللهجة المصرية
+- تشجع الطالب
 
-ممنوع:
-- تكتب "[مستوى اللاعب: ...]" دي تظهر للمستخدم
-- تعمل reset في نص المحادثة
-- تطلب "اكتب نبدأ" غير في أول مرة بس`;
+ملاحظة مهمة: أنت مدرس لكل المواد (رياضيات، علوم، عربي، إنجليزي، دراسات)، مش متخصص في مادة واحدة. الطالب ممكن يسألك في أي حاجة.`;
 
-// هيكل بيانات المستخدم المتقدم
-class UserSession {
-    constructor() {
-        this.mode = MODES.ONBOARDING;
-        this.level = 1;
-        this.score = 0;
-        this.streak = 0;
-        this.currentQuestion = null;
-        this.currentAnswer = null;
-        this.conversationHistory = [];
-        this.hasStarted = false; // عشان نعرف لو بدأ قبل كده
-    }
-}
-
-const sessions = new Map(); // تخزين جلسات المستخدمين
-
-function getUserSession(chatId) {
-    if (!sessions.has(chatId)) {
-        sessions.set(chatId, new UserSession());
-    }
-    return sessions.get(chatId);
-}
-
-// التعامل مع إجابات الطالب
-function handleAnswer(session, userAnswer) {
-    if (session.mode !== MODES.QUESTION || session.currentAnswer === null) {
-        return null;
-    }
-    
-    const answer = parseInt(userAnswer);
-    const isCorrect = (answer === session.currentAnswer);
-    
-    if (isCorrect) {
-        session.score += 10;
-        session.streak++;
-        session.mode = MODES.LEARNING;
-        
-        let reply = `🔥 أداء قوي يا بطل! ✅ إجابة صح!\n⭐ نقاطك: ${session.score}\n📊 ضربت ${session.streak} صح ورا بعض!\n\n`;
-        
-        // نضيف سؤال جديد
-        const newQuestion = getNextQuestion(session.level);
-        if (newQuestion) {
-            session.currentQuestion = newQuestion.question;
-            session.currentAnswer = newQuestion.answer;
-            session.mode = MODES.QUESTION;
-            reply += `${newQuestion.question}\n\nقوللي الرقم كام؟ 💪`;
-        } else {
-            reply += `عايز تحل مسألة أصعب شوية ولا نرجع حاجة تانية؟`;
-        }
-        
-        return reply;
-    } else {
-        session.streak = 0;
-        // ندي hint من غير ما نغير السؤال
-        return `قريب 👀 تعالى نعدهم سوا:\n\n${getHintForQuestion(session.currentQuestion, session.currentAnswer)}\n\nجرب تاني وقولي الرقم الصح كام؟ 💪`;
-    }
-}
-
-function getNextQuestion(level) {
-    const questions = {
-        1: [
-            { question: "🍎🍎🍎 + 🍎🍎 = كام تفاحة؟", answer: 5 },
-            { question: "💰💰💰💰 + 💰💰💰 = كام جنيه؟", answer: 7 },
-            { question: "🪑🪑🪑🪑🪑🪑 + 🪑🪑 = كام كرسي؟", answer: 8 }
-        ],
-        2: [
-            { question: "15 + 20 = كام؟", answer: 35 },
-            { question: "25 + 13 = كام؟", answer: 38 },
-            { question: "42 + 17 = كام؟", answer: 59 }
-        ]
-    };
-    
-    const levelQuestions = questions[level] || questions[1];
-    const randomIndex = Math.floor(Math.random() * levelQuestions.length);
-    return levelQuestions[randomIndex];
-}
-
-function getHintForQuestion(question, answer) {
-    if (answer === 5) return "3... 4... 5";
-    if (answer === 7) return "4... 5... 6... 7";
-    if (answer === 8) return "6... 7... 8";
-    if (answer === 35) return "15... 20... 25... 30... 35";
-    if (answer === 38) return "25... 30... 35... 38";
-    return "جمع الرقمين مع بعض خطوة خطوة";
-}
-
-async function chatWithAI(message, session) {
-    try {
-        console.log(`🔄 Using model: ${MODEL}, Mode: ${session.mode}`);
-        
-        const messages = [
-            {
-                role: "system",
-                content: TEACHER_SYSTEM_PROMPT
-            },
-            ...session.conversationHistory.slice(-10),
-            {
-                role: "user",
-                content: `[الوضع الحالي: ${session.mode} | مستوى: ${session.level} | نقاط: ${session.score}]
-                
-سؤال المستخدم: ${message}`
-            }
-        ];
-        
-        const response = await axios.post(
-            'https://openrouter.ai/api/v1/chat/completions',
-            {
-                model: MODEL,
-                messages: messages,
-                temperature: 0.7,
-                max_tokens: 600
-            },
-            {
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-                    'HTTP-Referer': 'https://school-gamma-ten.vercel.app',
-                    'X-Title': 'WhatsApp Teacher Bot'
+async function chatWithAI(message, conversationHistory = []) {
+    for (const model of MODELS) {
+        try {
+            console.log(`🔄 Trying model: ${model}`);
+            
+            const messages = [
+                {
+                    role: "system",
+                    content: TEACHER_SYSTEM_PROMPT
                 },
-                timeout: 20000
+                ...conversationHistory,
+                {
+                    role: "user",
+                    content: message
+                }
+            ];
+            
+            const response = await axios.post(
+                'https://openrouter.ai/api/v1/chat/completions',
+                {
+                    model: model,
+                    messages: messages,
+                    temperature: 0.7,
+                    max_tokens: 600
+                },
+                {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+                        'HTTP-Referer': 'https://school-gamma-ten.vercel.app',
+                        'X-Title': 'WhatsApp Teacher Bot'
+                    },
+                    timeout: 20000
+                }
+            );
+            
+            if (response.data?.choices?.[0]?.message?.content) {
+                console.log(`✅ Success with ${model}`);
+                return response.data.choices[0].message.content;
             }
-        );
-        
-        if (response.data?.choices?.[0]?.message?.content) {
-            let reply = response.data.choices[0].message.content;
-            // ننقي الرد من أي metadata
-            reply = reply.replace(/\[.*?\]/g, '').trim();
-            return reply;
+            
+        } catch (error) {
+            console.log(`❌ ${model} failed:`, error.response?.data?.error?.message || error.message);
         }
-        
-    } catch (error) {
-        console.log(`❌ Model failed:`, error.message);
     }
     
-    return null;
+    throw new Error('كل النماذج فشلت');
 }
 
-// ردود احتياطية ذكية
-function getFallbackReply(message, session) {
+function getFallbackReply(message) {
     const msg = message.toLowerCase().trim();
     
-    // لو في وضع QUESTION، نتعامل مع الإجابة مباشرة
-    if (session.mode === MODES.QUESTION && session.currentAnswer !== null) {
-        const answerMatch = msg.match(/\d+/);
-        if (answerMatch) {
-            return handleAnswer(session, answerMatch[0]);
-        } else {
-            return `قوللي الرقم كام بالارقام يا بطل 💪\n\n${session.currentQuestion}`;
-        }
+    // لو طلب شرح الطرح
+    if (msg.includes('طرح')) {
+        return `تمام يا بطل 👊
+
+الطرح هو إنك بتاخد حاجة من حاجة تانية.
+
+مثال: لو معاك ٥ تفاحات 🍎🍎🍎🍎🍎
+وأكلت ٢ تفاحة 🍎🍎
+يبقى فضل معاك كام تفاحة؟
+
+فكر شوية وقولي الرقم 😊`;
     }
     
     // لو طلب شرح الجمع
-    if (msg.includes('جمع') || msg.includes('شرح')) {
-        const firstQuestion = getNextQuestion(1);
-        session.mode = MODES.QUESTION;
-        session.currentQuestion = firstQuestion.question;
-        session.currentAnswer = firstQuestion.answer;
-        session.hasStarted = true;
-        
-        return `تمام جداً! الجمع ببساطة هو إنك بتضم مجموعتين أو أكثر مع بعض عشان تعمل مجموعة واحدة أكبر.\n\n${firstQuestion.question}\n\nجرّب تحسبها وقولي الناتج! 😉`;
+    if (msg.includes('جمع')) {
+        return `يلا بينا يا بطل 👊
+
+الجمع هو إنك بتضيف حاجة لحاجة تانية.
+
+مثال: لو معاك ٣ أقلام ✏️✏️✏️
+وجبتلك ٢ تانيين ✏️✏️
+يبقى معاك كام قلم؟
+
+جرب تحسبها وقولي كام؟`;
     }
     
-    // لو أول مرة
-    if (!session.hasStarted && (msg.includes('اهلا') || msg.includes('هلا') || msg.includes('بداية'))) {
-        session.hasStarted = true;
-        return `🎯 أهلاً بيك في أكاديمية كابتن ماث!\n\nأنا كابتن ماث، المدرب بتاعك في عالم الرياضيات.\n\nاكتبلي "اشرحلي الجمع" وهنبدأ أول درس 💪`;
+    const replies = {
+        'اهلا': '🎉 أهلاً بيك يا بطل! أنا مدرسك الخصوصي. اسألني في أي مادة (رياضيات - علوم - عربي - إنجليزي - دراسات) وهاخد معاك خطوة خطوة لحد ما تفهم 💪',
+        'انت مين': '👨‍🏫 أنا مدرسك الصبور! بدرس كل المواد للإعدادية. مهمتي إني أعلّمك مش أحللك المسائل. اسألني في أي حاجة وهبدأ أشرحلك خطوة بخطوة.',
+        'مش عارف': 'ماشي يا حبيبي 🤗 خليني أسهلها عليك. فكر معايا خطوة خطوة وهتوصل لحلها إن شاء الله. جهيز نبدأ؟',
+        'شكرا': 'العفو يا بطل 🤗 أي خدمة. لو عايز تفهم حاجة تانية، أنا موجود 💪',
+    };
+    
+    for (const [key, value] of Object.entries(replies)) {
+        if (msg.includes(key)) return value;
     }
     
-    // لو كتب "نبدأ" أو أي حاجة تانية
-    if (msg.includes('نبدأ') && !session.hasStarted) {
-        session.hasStarted = true;
-        return `🎯 يلا بينا! اكتبلي "اشرحلي الجمع" وهنبدأ أول درس 💪`;
-    }
-    
-    // أي كلام تاني
-    if (session.hasStarted && session.mode === MODES.LEARNING) {
-        return `اكتبلي "اشرحلي الجمع" عشان نبدأ، أو اسألني في حاجة تانية 😊`;
-    }
-    
-    return `🎯 أهلاً بيك! أنا كابتن ماث.\n\nاكتبلي "اشرحلي الجمع" وهنبدأ أول درس مع بعض 💪`;
+    return `👨‍🏫 مرحباً بيك يا بطل!
+
+أنا مدرسك الخصوصي لجميع المواد (رياضيات - علوم - عربي - إنجليزي - دراسات).
+
+اسألني في أي حاجة مش فاهمها وهاخد معاك خطوة خطوة لحد ما توصل للحل بنفسك.
+
+جهيز تبدأ؟ قوللي ايه اللي عايز تذاكره 😊`;
 }
 
 async function sendWAPilotMessage(chatId, text) {
@@ -236,6 +145,9 @@ async function sendWAPilotMessage(chatId, text) {
     }
 }
 
+// تخزين المحادثات
+const conversationStore = new Map();
+
 module.exports = async (req, res) => {
     const url = req.url || '';
     const method = req.method || 'GET';
@@ -248,11 +160,11 @@ module.exports = async (req, res) => {
         return res.status(200).send(`
             <!DOCTYPE html>
             <html dir="rtl">
-            <head><title>أكاديمية كابتن ماث</title></head>
-            <body style="font-family: Arial; text-align: center; padding: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
-                <h1>🎯 أكاديمية كابتن ماث</h1>
-                <p>✅ نظام State Machine - بيحافظ على flow المحادثة</p>
-                <p>🔥 جرب تسأل: "اشرحلي الجمع"</p>
+            <head><title>بوت المدرس الصبور</title></head>
+            <body style="font-family: Arial; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
+                <h1>👨‍🏫 بوت المدرس الصبور</h1>
+                <p>✅ شغال - مدرس لكل المواد (رياضيات - علوم - عربي - إنجليزي - دراسات)</p>
+                <p>🎯 جرب تسأل: "اشرحلي الطرح" أو "اشرحلي الجمع"</p>
             </body>
             </html>
         `);
@@ -273,36 +185,31 @@ module.exports = async (req, res) => {
         console.log(`📨 Received: "${textMessage}" from ${chatId}`);
         
         if (textMessage && textMessage.trim()) {
-            const session = getUserSession(chatId);
+            let conversationHistory = conversationStore.get(chatId) || [];
             
-            let reply = null;
-            
-            // نجرب الـ AI أولاً
             if (OPENROUTER_API_KEY) {
                 try {
-                    reply = await chatWithAI(textMessage, session);
+                    const reply = await chatWithAI(textMessage, conversationHistory);
+                    await sendWAPilotMessage(chatId, reply);
+                    
+                    conversationHistory.push({ role: "user", content: textMessage });
+                    conversationHistory.push({ role: "assistant", content: reply });
+                    if (conversationHistory.length > 20) {
+                        conversationHistory = conversationHistory.slice(-20);
+                    }
+                    conversationStore.set(chatId, conversationHistory);
+                    
                 } catch (error) {
                     console.error('AI Error:', error);
+                    const fallback = getFallbackReply(textMessage);
+                    await sendWAPilotMessage(chatId, fallback);
                 }
+            } else {
+                const fallback = getFallbackReply(textMessage);
+                await sendWAPilotMessage(chatId, fallback);
             }
-            
-            // لو AI مردش، نستخدم الـ fallback
-            if (!reply) {
-                reply = getFallbackReply(textMessage, session);
-            }
-            
-            await sendWAPilotMessage(chatId, reply);
-            
-            // تحديث تاريخ المحادثة
-            session.conversationHistory.push({ role: "user", content: textMessage });
-            session.conversationHistory.push({ role: "assistant", content: reply });
-            if (session.conversationHistory.length > 20) {
-                session.conversationHistory = session.conversationHistory.slice(-20);
-            }
-            sessions.set(chatId, session);
-            
         } else {
-            await sendWAPilotMessage(chatId, "🎯 أهلاً بيك! اكتبلي أي سؤال وهساعدك 💪");
+            await sendWAPilotMessage(chatId, "👨‍🏫 أهلاً بيك يا بطل! أنا مدرسك الصبور. اسألني في أي مادة وهاخد معاك خطوة خطوة لحد ما تفهم بنفسك 💪");
         }
         
         return res.status(200).json({ ok: true });
