@@ -9,17 +9,79 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 
 const MODEL = 'google/gemini-2.0-flash-001';
 
-const TEACHER_SYSTEM_PROMPT = `أنت مدرس صبور لطلاب المرحلة الإعدادية - كل المواد.
+const TEACHER_SYSTEM_PROMPT = `أنت مدرس صبور لطلاب المرحلة الإعدادية.
 
 قواعدك:
-1. لا تعطي الإجابة النهائية مباشرة.
-2. اسأل الطالب سؤال بسيط يقوده للحل.
-3. لو الطالب أجاب صح → كمل.
-4. لو أخطأ → قوله "قريب 👀 حاول تاني".
-5. بعد محاولتين → اشرح الحل.
+1. أنت مساعد، مش أساسي. دورك تشرح المفاهيم فقط.
+2. لا تسأل أسئلة بنفسك - النظام هو اللي بيسأل.
+3. لو الطالب سأل عن شرح مفهوم، اشرحه ببساطة باللهجة المصرية.
+4. ممنوع تعمل reset أو تقول "اسألني في أي مادة".
 
-أسلوبك باللهجة المصرية.
-ممنوع الكود البرمجي في الرد.`;
+أنت هنا للمساعدة في الشرح فقط، مش لإدارة الأسئلة.`;
+
+// 1. أهم دالة - توليد سؤال جمع
+function generateAdditionQuestion(session) {
+    const num1 = Math.floor(Math.random() * 10) + 1;
+    const num2 = Math.floor(Math.random() * 10) + 1;
+    
+    session.lastQuestion = `🍎 لو معاك ${num1} تفاحات، وجبتلك ${num2} تفاحات تانيين، بقى معاك كام تفاحة؟`;
+    session.correctAnswer = num1 + num2;
+    session.mode = 'question';
+    session.failCount = 0;
+    
+    console.log(`📝 Generated question: ${num1} + ${num2} = ${session.correctAnswer}`);
+    
+    return session.lastQuestion;
+}
+
+// دالة توليد سؤال طرح
+function generateSubtractionQuestion(session) {
+    const num1 = Math.floor(Math.random() * 15) + 5;
+    const num2 = Math.floor(Math.random() * 5) + 1;
+    
+    session.lastQuestion = `🍎 لو معاك ${num1} تفاحة، وأكلت ${num2} تفاحات، فضل معاك كام تفاحة؟`;
+    session.correctAnswer = num1 - num2;
+    session.mode = 'question';
+    session.failCount = 0;
+    
+    console.log(`📝 Generated question: ${num1} - ${num2} = ${session.correctAnswer}`);
+    
+    return session.lastQuestion;
+}
+
+// 2. معالجة الإجابة الرقمية
+function handleNumericAnswer(userMessage, session) {
+    const numbers = userMessage.match(/\d+/g);
+    if (!numbers) return null;
+    
+    const userAnswer = parseInt(numbers[0]);
+    
+    if (session.mode === 'question' && session.correctAnswer !== null) {
+        if (userAnswer === session.correctAnswer) {
+            // إجابة صحيحة
+            session.failCount = 0;
+            
+            // نولّد سؤال جديد
+            const newQuestion = generateAdditionQuestion(session);
+            
+            return `🔥 أداء قوي يا بطل! ✅ إجابة صح!\n\n${newQuestion}`;
+        } else {
+            // إجابة غلط
+            session.failCount++;
+            
+            if (session.failCount >= 2) {
+                // بعد محاولتين فاشلتين، نشرح الحل
+                session.failCount = 0;
+                const explanation = `📝 خلينا نفهمها صح:\n\nالسؤال: ${session.lastQuestion}\nالحل: ${session.correctAnswer}\n\nجهيز للسؤال الجاي؟ 💪\n\n${generateAdditionQuestion(session)}`;
+                return explanation;
+            }
+            
+            return `قريب 👀 حاول تاني.\n\n${session.lastQuestion}`;
+        }
+    }
+    
+    return null;
+}
 
 function cleanResponse(text) {
     if (!text || text.trim().length < 3) return null;
@@ -29,15 +91,15 @@ function cleanResponse(text) {
     return text.trim();
 }
 
-// 2. اصلح الكارثة - self كانت غلط
 class UserSession {
     constructor() {
-        this.mode = 'learning';      // learning أو question
+        this.mode = 'learning';
         this.conversationHistory = [];
         this.hasStarted = false;
-        this.lastQuestion = null;     // تخزين السؤال اللي اتسأل
-        this.correctAnswer = null;    // تخزين الإجابة الصحيحة
-        this.failCount = 0;           // عدد المحاولات الفاشلة
+        this.lastQuestion = null;
+        this.correctAnswer = null;
+        this.failCount = 0;
+        this.currentTopic = null;
     }
 }
 
@@ -50,43 +112,10 @@ function getUserSession(chatId) {
     return sessions.get(chatId);
 }
 
-// 4. أهم إضافة - رد على الإجابة بنفسك
-function handleNumericAnswer(userMessage, session) {
-    // استخراج الرقم من الرسالة
-    const numbers = userMessage.match(/\d+/g);
-    if (!numbers) return null;
-    
-    const userAnswer = parseInt(numbers[0]);
-    
-    // لو في وضع السؤال وعندنا إجابة متوقعة
-    if (session.mode === 'question' && session.correctAnswer !== null) {
-        if (userAnswer === session.correctAnswer) {
-            // إجابة صحيحة
-            session.failCount = 0;
-            session.mode = 'learning';
-            return `🔥 صح يا بطل! أداء قوي!\n\nجهيز للسؤال الجاي؟`;
-        } else {
-            // إجابة غلط
-            session.failCount++;
-            
-            if (session.failCount >= 2) {
-                session.mode = 'learning';
-                session.failCount = 0;
-                return `قريب 👀 خلينا نفهمها صح:\n\n${session.lastQuestion}\nالحل الصحيح: ${session.correctAnswer}\n\nفهمتها؟`;
-            }
-            
-            return `قريب 👀 حاول تاني.\n\n${session.lastQuestion}`;
-        }
-    }
-    
-    return null;
-}
-
 async function chatWithAI(message, session) {
     try {
-        console.log(`🔄 Using model: ${MODEL}, Mode: ${session.mode}`);
+        console.log(`🔄 AI helper mode, Topic: ${session.currentTopic}`);
         
-        // 5. قلل الـ history لآخر 6 رسائل بس
         const shortHistory = session.conversationHistory.slice(-6);
         
         const messages = [
@@ -101,7 +130,7 @@ async function chatWithAI(message, session) {
                 model: MODEL,
                 messages: messages,
                 temperature: 0.7,
-                max_tokens: 600
+                max_tokens: 500
             },
             {
                 headers: {
@@ -117,61 +146,30 @@ async function chatWithAI(message, session) {
         if (response.data?.choices?.[0]?.message?.content) {
             let reply = response.data.choices[0].message.content;
             const cleaned = cleanResponse(reply);
-            
-            // لو الرد فيه سؤال، نخزنه عشان نعرف الإجابة بعدين
-            if (reply.includes('؟') || reply.includes('كام')) {
-                session.mode = 'question';
-                // هنخلي الـ AI يحدد السؤال والإجابة
-                // بس هنحاول نستخرج الرقم المتوقع من السياق
-            }
-            
             return cleaned || reply;
         }
         
     } catch (error) {
-        console.log(`❌ Model failed:`, error.message);
+        console.log(`❌ AI failed:`, error.message);
     }
     return null;
 }
 
-// 1. اصلح الـ fallback - يخلي الـ flow مستمر
 function getFallbackReply(message, session) {
     const msg = message.toLowerCase().trim();
     
-    // لو في نص شرح وطلب تكملة
-    if (msg.includes('كنا بنشرح') || msg.includes('نكمل')) {
-        if (session.lastQuestion) {
-            return `آه يا بطل، كنا في السؤال ده:\n\n${session.lastQuestion}\n\nجرب تحله تاني 💪`;
-        }
-        return `كنا بنشرح الرياضيات. جهيز تحل السؤال الجاي؟ 😊`;
-    }
-    
-    // لو في وضع السؤال ورد برقم
-    const numericResult = handleNumericAnswer(message, session);
-    if (numericResult) return numericResult;
-    
-    // 6. امسح أي onboarding أو "اسألني في أي مادة"
-    // دلوقتي الـ fallback قصير ومفيهوش reset
-    if (msg.includes('انت مين')) {
-        return "👨‍🏫 أنا مدرسك الصبور. قولي عايز تفهم ايه؟";
-    }
-    
-    if (msg.includes('شكرا')) {
-        return "العفو يا بطل 🤗";
-    }
-    
-    // 1. أهم حاجة - منرجعش للبداية
+    // منرجعش للبداية أبداً
     if (session.hasStarted && session.lastQuestion) {
-        return `معلش حصل لخبطة بسيطة 😅 نكمل من هنا...\n\n${session.lastQuestion}`;
+        return `😅 معلش حصل لخبطة بسيطة... كنا في السؤال ده:\n\n${session.lastQuestion}`;
     }
     
     if (session.hasStarted) {
-        return "معلش حصل لخبطة بسيطة 😅 قولي كنا بنشرح ايه؟";
+        return `😅 معلش حصل لخبطة بسيطة... قولي عايز تتعلم ايه بالضبط؟`;
     }
     
     // أول مرة بس
     session.hasStarted = true;
-    return "🎯 أهلاً بيك! قولي عايز تتعلم ايه وهبدأ أشرحلك 💪";
+    return `👨‍🏫 مرحباً بيك! أنا مدرسك الصبور.\n\nقولي عايز تتعلم ايه؟ (جمع - طرح - ضرب - قسمة)`;
 }
 
 async function sendWAPilotMessage(chatId, text) {
@@ -203,7 +201,8 @@ module.exports = async (req, res) => {
             <head><title>بوت المدرس الصبور</title></head>
             <body style="font-family: Arial; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
                 <h1>👨‍🏫 بوت المدرس الصبور</h1>
-                <p>✅ شغال - نظام متكامل</p>
+                <p>✅ شغال - نظام الأسئلة متكامل</p>
+                <p>🎯 جرب تسأل: "اشرحلي الجمع"</p>
             </body>
             </html>
         `);
@@ -225,45 +224,58 @@ module.exports = async (req, res) => {
         
         if (textMessage && textMessage.trim()) {
             const session = getUserSession(chatId);
-            
             let reply = null;
             
-            // 3. منطق قبل الـ AI
-            // لو طلب شرح
-            if (textMessage.includes('اشرح') || textMessage.includes('شرح')) {
-                session.mode = 'learning';
-                session.failCount = 0;
-            }
-            
-            // لو رد برقم في وضع السؤال
+            // 3. الأول نتحقق من الرقم (إجابة على سؤال)
             const numericMatch = textMessage.match(/^\d+$/);
             if (numericMatch && session.mode === 'question') {
                 reply = handleNumericAnswer(textMessage, session);
             }
             
-            // لو مفيش رد لسه، نجرب الـ AI
-            if (!reply && OPENROUTER_API_KEY) {
-                try {
-                    const aiReply = await chatWithAI(textMessage, session);
-                    if (aiReply) {
-                        reply = aiReply;
-                        
-                        // محاولة بسيطة لاستخراج السؤال والإجابة من رد الـ AI
-                        // ده تحسين، مش ضروري للشغل الأساسي
-                    }
-                } catch (error) {
-                    console.error('AI Error:', error);
-                }
-            }
-            
-            // لو مفيش رد لسه، نستخدم الـ fallback
+            // لو مفيش رد، نشوف لو طلب شرح مادة
             if (!reply) {
-                reply = getFallbackReply(textMessage, session);
+                if (textMessage.includes('جمع') || textMessage.includes('الجمع')) {
+                    session.currentTopic = 'addition';
+                    const firstQuestion = generateAdditionQuestion(session);
+                    reply = `👨‍🏫 الجمع ببساطة هو إضافة الأرقام لبعضها.\n\n${firstQuestion}`;
+                }
+                else if (textMessage.includes('طرح') || textMessage.includes('الطرح')) {
+                    session.currentTopic = 'subtraction';
+                    const firstQuestion = generateSubtractionQuestion(session);
+                    reply = `👨‍🏫 الطرح هو إنك تاخد حاجة من حاجة تانية.\n\n${firstQuestion}`;
+                }
+                else if (textMessage.includes('انت مين')) {
+                    reply = "👨‍🏫 أنا مدرسك الصبور. قولي عايز تتعلم ايه؟";
+                }
+                else if (textMessage.includes('شكرا')) {
+                    reply = "العفو يا بطل 🤗";
+                }
+                else {
+                    // لأي سؤال تاني، نخلي الـ AI يشرح
+                    if (OPENROUTER_API_KEY) {
+                        try {
+                            const aiReply = await chatWithAI(textMessage, session);
+                            if (aiReply) {
+                                reply = aiReply;
+                            }
+                        } catch (error) {
+                            console.error('AI Error:', error);
+                        }
+                    }
+                    
+                    if (!reply) {
+                        if (session.hasStarted && session.lastQuestion) {
+                            reply = `😅 كنا في السؤال ده:\n\n${session.lastQuestion}`;
+                        } else {
+                            reply = "قولي عايز تتعلم ايه؟ (جمع - طرح)";
+                        }
+                    }
+                }
             }
             
             await sendWAPilotMessage(chatId, reply);
             
-            // تحديث الـ history - آخر 6 بس
+            // تحديث الـ history
             session.conversationHistory.push({ role: "user", content: textMessage });
             session.conversationHistory.push({ role: "assistant", content: reply });
             if (session.conversationHistory.length > 12) {
