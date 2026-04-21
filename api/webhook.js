@@ -9,47 +9,102 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 
 const MODEL = 'google/gemini-2.0-flash-001';
 
+// 9. الـ Prompt الجديد - مدرس حقيقي مش ChatGPT
 const TEACHER_SYSTEM_PROMPT = `أنت مدرس صبور لطلاب المرحلة الإعدادية.
 
-قواعدك:
-1. أنت مساعد، مش أساسي. دورك تشرح المفاهيم فقط.
-2. لا تسأل أسئلة بنفسك - النظام هو اللي بيسأل.
-3. لو الطالب سأل عن شرح مفهوم، اشرحه ببساطة باللهجة المصرية.
-4. ممنوع تعمل reset أو تقول "اسألني في أي مادة".
+أسلوبك:
+- اشرح ببساطة شديدة باللهجة المصرية
+- لو الطالب قال "اشرح براحة" → استخدم مثال بسيط جداً
+- اسأل الطالب "فهمت؟" أو "تحب نجرب سؤال؟"
+- لا تنتقل لسؤال جديد إلا بعد تأكيد الفهم
 
-أنت هنا للمساعدة في الشرح فقط، مش لإدارة الأسئلة.`;
+مهمتك:
+- أنت هنا للشرح فقط، مش لإدارة الأسئلة
+- النظام هو اللي هيسأل الأسئلة ويصحح الإجابات
+- لو الطالب وافق على سؤال، قوله "تمام، استنى السؤال من النظام"
 
-// 1. أهم دالة - توليد سؤال جمع
+ممنوع:
+- تسأل أسئلة رياضية بنفسك
+- تقول "اسألني في أي مادة"
+- تعمل reset في نص المحادثة`;
+
+// 1. Intent Detection
+function detectIntent(message) {
+    const msg = message.toLowerCase();
+    
+    if (msg.includes('اشرح') || msg.includes('شرح')) return 'explain';
+    if (msg.match(/^\d+$/)) return 'answer';
+    if (msg.includes('سؤال') || msg.includes('مسألة') || msg.includes('تحدي')) return 'practice';
+    if (msg.includes('فهمت') || msg.includes('ايوه') || msg.includes('اه') || msg.includes('تمام')) return 'confirm';
+    
+    return 'general';
+}
+
+// 2. Topic Detection
+function detectTopic(message) {
+    const msg = message.toLowerCase();
+    
+    if (msg.includes('جمع')) return 'addition';
+    if (msg.includes('طرح')) return 'subtraction';
+    if (msg.includes('ضرب')) return 'multiplication';
+    if (msg.includes('قسم')) return 'division';
+    if (msg.includes('انجليزي') || msg.includes('english')) return 'english';
+    if (msg.includes('علوم') || msg.includes('science')) return 'science';
+    if (msg.includes('عربي')) return 'arabic';
+    
+    return null;
+}
+
+// توليد أسئلة حسب المادة
+function generateQuestionByTopic(session) {
+    if (session.currentTopic === 'addition') {
+        return generateAdditionQuestion(session);
+    } else if (session.currentTopic === 'subtraction') {
+        return generateSubtractionQuestion(session);
+    } else if (session.currentTopic === 'multiplication') {
+        return generateMultiplicationQuestion(session);
+    } else {
+        return generateAdditionQuestion(session);
+    }
+}
+
 function generateAdditionQuestion(session) {
     const num1 = Math.floor(Math.random() * 10) + 1;
     const num2 = Math.floor(Math.random() * 10) + 1;
     
-    session.lastQuestion = `🍎 لو معاك ${num1} تفاحات، وجبتلك ${num2} تفاحات تانيين، بقى معاك كام تفاحة؟`;
+    session.lastQuestion = `🧮 لو معاك ${num1} تفاحات 🍎، وجبتلك ${num2} تفاحات تانيين، بقى معاك كام تفاحة؟`;
     session.correctAnswer = num1 + num2;
     session.mode = 'question';
     session.failCount = 0;
     
-    console.log(`📝 Generated question: ${num1} + ${num2} = ${session.correctAnswer}`);
-    
     return session.lastQuestion;
 }
 
-// دالة توليد سؤال طرح
 function generateSubtractionQuestion(session) {
     const num1 = Math.floor(Math.random() * 15) + 5;
     const num2 = Math.floor(Math.random() * 5) + 1;
     
-    session.lastQuestion = `🍎 لو معاك ${num1} تفاحة، وأكلت ${num2} تفاحات، فضل معاك كام تفاحة؟`;
+    session.lastQuestion = `🧮 لو معاك ${num1} جنيه 💰، وصرفت ${num2} جنيه، فضل معاك كام جنيه؟`;
     session.correctAnswer = num1 - num2;
     session.mode = 'question';
     session.failCount = 0;
     
-    console.log(`📝 Generated question: ${num1} - ${num2} = ${session.correctAnswer}`);
+    return session.lastQuestion;
+}
+
+function generateMultiplicationQuestion(session) {
+    const num1 = Math.floor(Math.random() * 5) + 1;
+    const num2 = Math.floor(Math.random() * 5) + 1;
+    
+    session.lastQuestion = `🧮 لو معاك ${num1} كيس، وفي كل كيس ${num2} تفاحات، يبقى معاك كام تفاحة؟`;
+    session.correctAnswer = num1 * num2;
+    session.mode = 'question';
+    session.failCount = 0;
     
     return session.lastQuestion;
 }
 
-// 2. معالجة الإجابة الرقمية
+// 4. معالجة الإجابات الرقمية
 function handleNumericAnswer(userMessage, session) {
     const numbers = userMessage.match(/\d+/g);
     if (!numbers) return null;
@@ -58,22 +113,16 @@ function handleNumericAnswer(userMessage, session) {
     
     if (session.mode === 'question' && session.correctAnswer !== null) {
         if (userAnswer === session.correctAnswer) {
-            // إجابة صحيحة
             session.failCount = 0;
-            
-            // نولّد سؤال جديد
-            const newQuestion = generateAdditionQuestion(session);
-            
+            const newQuestion = generateQuestionByTopic(session);
             return `🔥 أداء قوي يا بطل! ✅ إجابة صح!\n\n${newQuestion}`;
         } else {
-            // إجابة غلط
             session.failCount++;
             
             if (session.failCount >= 2) {
-                // بعد محاولتين فاشلتين، نشرح الحل
                 session.failCount = 0;
-                const explanation = `📝 خلينا نفهمها صح:\n\nالسؤال: ${session.lastQuestion}\nالحل: ${session.correctAnswer}\n\nجهيز للسؤال الجاي؟ 💪\n\n${generateAdditionQuestion(session)}`;
-                return explanation;
+                const newQuestion = generateQuestionByTopic(session);
+                return `📝 خلينا نفهمها صح:\n\nالسؤال: ${session.lastQuestion}\nالحل: ${session.correctAnswer}\n\nجهيز للسؤال الجاي؟ 💪\n\n${newQuestion}`;
             }
             
             return `قريب 👀 حاول تاني.\n\n${session.lastQuestion}`;
@@ -100,6 +149,8 @@ class UserSession {
         this.correctAnswer = null;
         this.failCount = 0;
         this.currentTopic = null;
+        this.intent = null;
+        this.waitingForConfirmation = false;
     }
 }
 
@@ -114,7 +165,7 @@ function getUserSession(chatId) {
 
 async function chatWithAI(message, session) {
     try {
-        console.log(`🔄 AI helper mode, Topic: ${session.currentTopic}`);
+        console.log(`🔄 AI explaining: ${session.currentTopic}`);
         
         const shortHistory = session.conversationHistory.slice(-6);
         
@@ -155,23 +206,6 @@ async function chatWithAI(message, session) {
     return null;
 }
 
-function getFallbackReply(message, session) {
-    const msg = message.toLowerCase().trim();
-    
-    // منرجعش للبداية أبداً
-    if (session.hasStarted && session.lastQuestion) {
-        return `😅 معلش حصل لخبطة بسيطة... كنا في السؤال ده:\n\n${session.lastQuestion}`;
-    }
-    
-    if (session.hasStarted) {
-        return `😅 معلش حصل لخبطة بسيطة... قولي عايز تتعلم ايه بالضبط؟`;
-    }
-    
-    // أول مرة بس
-    session.hasStarted = true;
-    return `👨‍🏫 مرحباً بيك! أنا مدرسك الصبور.\n\nقولي عايز تتعلم ايه؟ (جمع - طرح - ضرب - قسمة)`;
-}
-
 async function sendWAPilotMessage(chatId, text) {
     try {
         await axios.post(
@@ -201,8 +235,7 @@ module.exports = async (req, res) => {
             <head><title>بوت المدرس الصبور</title></head>
             <body style="font-family: Arial; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
                 <h1>👨‍🏫 بوت المدرس الصبور</h1>
-                <p>✅ شغال - نظام الأسئلة متكامل</p>
-                <p>🎯 جرب تسأل: "اشرحلي الجمع"</p>
+                <p>✅ شغال - نظام تصنيف ذكي</p>
             </body>
             </html>
         `);
@@ -226,51 +259,73 @@ module.exports = async (req, res) => {
             const session = getUserSession(chatId);
             let reply = null;
             
-            // 3. الأول نتحقق من الرقم (إجابة على سؤال)
-            const numericMatch = textMessage.match(/^\d+$/);
-            if (numericMatch && session.mode === 'question') {
+            // 1. اكتشاف النية
+            session.intent = detectIntent(textMessage);
+            
+            // 2. اكتشاف المادة (تحافظ على المادة السابقة لو مش متغيرة)
+            const newTopic = detectTopic(textMessage);
+            if (newTopic) {
+                session.currentTopic = newTopic;
+            }
+            
+            console.log(`🎯 Intent: ${session.intent}, Topic: ${session.currentTopic}`);
+            
+            // 4. Routing - أهم نقطة
+            if (session.intent === 'answer') {
                 reply = handleNumericAnswer(textMessage, session);
             }
             
-            // لو مفيش رد، نشوف لو طلب شرح مادة
+            else if (session.intent === 'explain') {
+                session.mode = 'explain';
+                const aiReply = await chatWithAI(textMessage, session);
+                if (aiReply) {
+                    reply = aiReply + "\n\n📌 فهمت كده؟ 👀 تحب نجرب سؤال بسيط؟";
+                    session.waitingForConfirmation = true;
+                } else {
+                    reply = "👨‍🏫 خليني أشرحلك ببساطة. قولي عايز تفهم ايه بالضبط؟";
+                }
+            }
+            
+            else if (session.intent === 'confirm') {
+                if (session.waitingForConfirmation || textMessage.includes('ايوه') || textMessage.includes('اه')) {
+                    if (session.currentTopic) {
+                        const question = generateQuestionByTopic(session);
+                        reply = `🎯 تمام! جهيز للسؤال؟\n\n${question}`;
+                        session.waitingForConfirmation = false;
+                    } else {
+                        reply = "قولي عايز تتدرب على ايه؟ (جمع - طرح - ضرب)";
+                    }
+                } else {
+                    reply = "تمام، قولي عايز تتعلم ايه بالضبط؟";
+                }
+            }
+            
+            else if (session.intent === 'practice') {
+                if (session.currentTopic) {
+                    const question = generateQuestionByTopic(session);
+                    reply = `🎯 يلا بينا!\n\n${question}`;
+                } else {
+                    reply = "قولي عايز تتدرب على ايه؟ (جمع - طرح - ضرب)";
+                }
+            }
+            
+            else {
+                // general - أي كلام تاني
+                const aiReply = await chatWithAI(textMessage, session);
+                if (aiReply) {
+                    reply = aiReply;
+                } else {
+                    if (session.hasStarted && session.lastQuestion) {
+                        reply = `كنا في السؤال ده:\n\n${session.lastQuestion}`;
+                    } else {
+                        reply = "👨‍🏫 أهلاً بيك! قولي عايز تتعلم ايه؟ (جمع - طرح - ضرب)";
+                        session.hasStarted = true;
+                    }
+                }
+            }
+            
             if (!reply) {
-                if (textMessage.includes('جمع') || textMessage.includes('الجمع')) {
-                    session.currentTopic = 'addition';
-                    const firstQuestion = generateAdditionQuestion(session);
-                    reply = `👨‍🏫 الجمع ببساطة هو إضافة الأرقام لبعضها.\n\n${firstQuestion}`;
-                }
-                else if (textMessage.includes('طرح') || textMessage.includes('الطرح')) {
-                    session.currentTopic = 'subtraction';
-                    const firstQuestion = generateSubtractionQuestion(session);
-                    reply = `👨‍🏫 الطرح هو إنك تاخد حاجة من حاجة تانية.\n\n${firstQuestion}`;
-                }
-                else if (textMessage.includes('انت مين')) {
-                    reply = "👨‍🏫 أنا مدرسك الصبور. قولي عايز تتعلم ايه؟";
-                }
-                else if (textMessage.includes('شكرا')) {
-                    reply = "العفو يا بطل 🤗";
-                }
-                else {
-                    // لأي سؤال تاني، نخلي الـ AI يشرح
-                    if (OPENROUTER_API_KEY) {
-                        try {
-                            const aiReply = await chatWithAI(textMessage, session);
-                            if (aiReply) {
-                                reply = aiReply;
-                            }
-                        } catch (error) {
-                            console.error('AI Error:', error);
-                        }
-                    }
-                    
-                    if (!reply) {
-                        if (session.hasStarted && session.lastQuestion) {
-                            reply = `😅 كنا في السؤال ده:\n\n${session.lastQuestion}`;
-                        } else {
-                            reply = "قولي عايز تتعلم ايه؟ (جمع - طرح)";
-                        }
-                    }
-                }
+                reply = "👨‍🏫 قولي عايز تتعلم ايه بالضبط؟";
             }
             
             await sendWAPilotMessage(chatId, reply);
@@ -284,8 +339,7 @@ module.exports = async (req, res) => {
             sessions.set(chatId, session);
             
         } else {
-            const session = getUserSession(chatId);
-            await sendWAPilotMessage(chatId, "أهلاً بيك! قولي عايز تتعلم ايه؟ 💪");
+            await sendWAPilotMessage(chatId, "👨‍🏫 أهلاً بيك! قولي عايز تتعلم ايه؟");
         }
         
         return res.status(200).json({ ok: true });
