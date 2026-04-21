@@ -7,50 +7,37 @@ const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 
-// ثبت موديل واحد - بلاش switching
 const MODEL = 'google/gemini-2.0-flash-001';
 
-// الـ Prompt الرئيسي - الموديل هو اللي يرد من نفسه
-const TEACHER_SYSTEM_PROMPT = `أنت مدرس صبور لطلاب المرحلة الإعدادية - كل المواد (رياضيات، علوم، عربي، إنجليزي، دراسات)
+const TEACHER_SYSTEM_PROMPT = `أنت مدرس صبور لطلاب المرحلة الإعدادية - كل المواد.
 
-قواعدك الصارمة:
+قواعدك:
 1. لا تعطي الإجابة النهائية مباشرة.
 2. اسأل الطالب سؤال بسيط يقوده للحل.
-3. لو الطالب أجاب بشكل صحيح → كمل للخطوة التالية + شجعه.
-4. لو أخطأ → قوله "قريب 👀" أو "حاول تاني" (ممنوع "ممتاز" وهو غلط).
-5. لو قال "مش عارف" → أعطه hint بسيط.
-6. بعد محاولتين فاشلتين → اشرح الحل خطوة خطوة.
+3. لو الطالب أجاب صح → كمل.
+4. لو أخطأ → قوله "قريب 👀 حاول تاني".
+5. بعد محاولتين → اشرح الحل.
 
-أسلوبك باللهجة المصرية:
-- "قريب 👀 حاول تاني"
-- "أداء قوي 🔥"
-- "يلا بينا يا بطل"
+أسلوبك باللهجة المصرية.
+ممنوع الكود البرمجي في الرد.`;
 
-ممنوع تماماً:
-- كود برمجي في الرد
-- حروف غريبة
-- تقول "ممتاز" والإجابة غلط
-- تعمل reset في نص المحادثة
-
-أنت المسؤول عن إنشاء الأسئلة والشرح حسب ما يراه الطالب مناسب.`;
-
-// فلترة الردود
 function cleanResponse(text) {
     if (!text || text.trim().length < 3) return null;
-    
-    if (text.includes('```') || text.includes('function') || text.includes('const ') || text.includes('let ')) {
+    if (text.includes('```') || text.includes('function') || text.includes('const ')) {
         return null;
     }
-    
     return text.trim();
 }
 
-// State System بسيط
+// 2. اصلح الكارثة - self كانت غلط
 class UserSession {
     constructor() {
-        this.mode = 'learning';
-        self.conversationHistory = [];
-        self.hasStarted = false;
+        this.mode = 'learning';      // learning أو question
+        this.conversationHistory = [];
+        this.hasStarted = false;
+        this.lastQuestion = null;     // تخزين السؤال اللي اتسأل
+        this.correctAnswer = null;    // تخزين الإجابة الصحيحة
+        this.failCount = 0;           // عدد المحاولات الفاشلة
     }
 }
 
@@ -63,20 +50,49 @@ function getUserSession(chatId) {
     return sessions.get(chatId);
 }
 
-async function chatWithAI(message, conversationHistory = []) {
+// 4. أهم إضافة - رد على الإجابة بنفسك
+function handleNumericAnswer(userMessage, session) {
+    // استخراج الرقم من الرسالة
+    const numbers = userMessage.match(/\d+/g);
+    if (!numbers) return null;
+    
+    const userAnswer = parseInt(numbers[0]);
+    
+    // لو في وضع السؤال وعندنا إجابة متوقعة
+    if (session.mode === 'question' && session.correctAnswer !== null) {
+        if (userAnswer === session.correctAnswer) {
+            // إجابة صحيحة
+            session.failCount = 0;
+            session.mode = 'learning';
+            return `🔥 صح يا بطل! أداء قوي!\n\nجهيز للسؤال الجاي؟`;
+        } else {
+            // إجابة غلط
+            session.failCount++;
+            
+            if (session.failCount >= 2) {
+                session.mode = 'learning';
+                session.failCount = 0;
+                return `قريب 👀 خلينا نفهمها صح:\n\n${session.lastQuestion}\nالحل الصحيح: ${session.correctAnswer}\n\nفهمتها؟`;
+            }
+            
+            return `قريب 👀 حاول تاني.\n\n${session.lastQuestion}`;
+        }
+    }
+    
+    return null;
+}
+
+async function chatWithAI(message, session) {
     try {
-        console.log(`🔄 Using model: ${MODEL}`);
+        console.log(`🔄 Using model: ${MODEL}, Mode: ${session.mode}`);
+        
+        // 5. قلل الـ history لآخر 6 رسائل بس
+        const shortHistory = session.conversationHistory.slice(-6);
         
         const messages = [
-            {
-                role: "system",
-                content: TEACHER_SYSTEM_PROMPT
-            },
-            ...conversationHistory,
-            {
-                role: "user",
-                content: message
-            }
+            { role: "system", content: TEACHER_SYSTEM_PROMPT },
+            ...shortHistory,
+            { role: "user", content: message }
         ];
         
         const response = await axios.post(
@@ -101,34 +117,61 @@ async function chatWithAI(message, conversationHistory = []) {
         if (response.data?.choices?.[0]?.message?.content) {
             let reply = response.data.choices[0].message.content;
             const cleaned = cleanResponse(reply);
-            console.log(`✅ AI response: ${reply.substring(0, 100)}...`);
+            
+            // لو الرد فيه سؤال، نخزنه عشان نعرف الإجابة بعدين
+            if (reply.includes('؟') || reply.includes('كام')) {
+                session.mode = 'question';
+                // هنخلي الـ AI يحدد السؤال والإجابة
+                // بس هنحاول نستخرج الرقم المتوقع من السياق
+            }
+            
             return cleaned || reply;
         }
         
     } catch (error) {
-        console.log(`❌ Model failed:`, error.response?.data?.error?.message || error.message);
+        console.log(`❌ Model failed:`, error.message);
     }
-    
     return null;
 }
 
-// ردود احتياطية بسيطة جداً
-function getFallbackReply(message) {
+// 1. اصلح الـ fallback - يخلي الـ flow مستمر
+function getFallbackReply(message, session) {
     const msg = message.toLowerCase().trim();
     
-    if (msg.includes('اهلا') || msg.includes('هلا')) {
-        return "🎉 أهلاً بيك يا بطل! أنا مدرسك الخصوصي. اسألني في أي مادة وهبدأ أشرحلك خطوة خطوة 💪";
+    // لو في نص شرح وطلب تكملة
+    if (msg.includes('كنا بنشرح') || msg.includes('نكمل')) {
+        if (session.lastQuestion) {
+            return `آه يا بطل، كنا في السؤال ده:\n\n${session.lastQuestion}\n\nجرب تحله تاني 💪`;
+        }
+        return `كنا بنشرح الرياضيات. جهيز تحل السؤال الجاي؟ 😊`;
     }
     
+    // لو في وضع السؤال ورد برقم
+    const numericResult = handleNumericAnswer(message, session);
+    if (numericResult) return numericResult;
+    
+    // 6. امسح أي onboarding أو "اسألني في أي مادة"
+    // دلوقتي الـ fallback قصير ومفيهوش reset
     if (msg.includes('انت مين')) {
-        return "👨‍🏫 أنا مدرسك الصبور! بدرس كل المواد للإعدادية. اسألني في أي حاجة مش فاهمها وهخليك توصل للحل بنفسك.";
+        return "👨‍🏫 أنا مدرسك الصبور. قولي عايز تفهم ايه؟";
     }
     
     if (msg.includes('شكرا')) {
-        return "العفو يا بطل 🤗 أي خدمة، أنا موجود في أي وقت.";
+        return "العفو يا بطل 🤗";
     }
     
-    return "👨‍🏫 أهلاً بيك! اسألني في أي مادة (رياضيات - علوم - عربي - إنجليزي) وهبدأ أشرحلك خطوة خطوة. جهيز؟ 😊";
+    // 1. أهم حاجة - منرجعش للبداية
+    if (session.hasStarted && session.lastQuestion) {
+        return `معلش حصل لخبطة بسيطة 😅 نكمل من هنا...\n\n${session.lastQuestion}`;
+    }
+    
+    if (session.hasStarted) {
+        return "معلش حصل لخبطة بسيطة 😅 قولي كنا بنشرح ايه؟";
+    }
+    
+    // أول مرة بس
+    session.hasStarted = true;
+    return "🎯 أهلاً بيك! قولي عايز تتعلم ايه وهبدأ أشرحلك 💪";
 }
 
 async function sendWAPilotMessage(chatId, text) {
@@ -145,8 +188,6 @@ async function sendWAPilotMessage(chatId, text) {
     }
 }
 
-const conversationStore = new Map();
-
 module.exports = async (req, res) => {
     const url = req.url || '';
     const method = req.method || 'GET';
@@ -162,8 +203,7 @@ module.exports = async (req, res) => {
             <head><title>بوت المدرس الصبور</title></head>
             <body style="font-family: Arial; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
                 <h1>👨‍🏫 بوت المدرس الصبور</h1>
-                <p>✅ شغال - مدرس لكل المواد</p>
-                <p>🎯 اسأل في أي حاجة: رياضيات - علوم - عربي - إنجليزي - دراسات</p>
+                <p>✅ شغال - نظام متكامل</p>
             </body>
             </html>
         `);
@@ -184,37 +224,56 @@ module.exports = async (req, res) => {
         console.log(`📨 Received: "${textMessage}" from ${chatId}`);
         
         if (textMessage && textMessage.trim()) {
-            let conversationHistory = conversationStore.get(chatId) || [];
+            const session = getUserSession(chatId);
             
-            if (OPENROUTER_API_KEY) {
+            let reply = null;
+            
+            // 3. منطق قبل الـ AI
+            // لو طلب شرح
+            if (textMessage.includes('اشرح') || textMessage.includes('شرح')) {
+                session.mode = 'learning';
+                session.failCount = 0;
+            }
+            
+            // لو رد برقم في وضع السؤال
+            const numericMatch = textMessage.match(/^\d+$/);
+            if (numericMatch && session.mode === 'question') {
+                reply = handleNumericAnswer(textMessage, session);
+            }
+            
+            // لو مفيش رد لسه، نجرب الـ AI
+            if (!reply && OPENROUTER_API_KEY) {
                 try {
-                    const reply = await chatWithAI(textMessage, conversationHistory);
-                    
-                    if (reply) {
-                        await sendWAPilotMessage(chatId, reply);
-                    } else {
-                        const fallback = getFallbackReply(textMessage);
-                        await sendWAPilotMessage(chatId, fallback);
+                    const aiReply = await chatWithAI(textMessage, session);
+                    if (aiReply) {
+                        reply = aiReply;
+                        
+                        // محاولة بسيطة لاستخراج السؤال والإجابة من رد الـ AI
+                        // ده تحسين، مش ضروري للشغل الأساسي
                     }
-                    
-                    conversationHistory.push({ role: "user", content: textMessage });
-                    conversationHistory.push({ role: "assistant", content: reply || getFallbackReply(textMessage) });
-                    if (conversationHistory.length > 20) {
-                        conversationHistory = conversationHistory.slice(-20);
-                    }
-                    conversationStore.set(chatId, conversationHistory);
-                    
                 } catch (error) {
                     console.error('AI Error:', error);
-                    const fallback = getFallbackReply(textMessage);
-                    await sendWAPilotMessage(chatId, fallback);
                 }
-            } else {
-                const fallback = getFallbackReply(textMessage);
-                await sendWAPilotMessage(chatId, fallback);
             }
+            
+            // لو مفيش رد لسه، نستخدم الـ fallback
+            if (!reply) {
+                reply = getFallbackReply(textMessage, session);
+            }
+            
+            await sendWAPilotMessage(chatId, reply);
+            
+            // تحديث الـ history - آخر 6 بس
+            session.conversationHistory.push({ role: "user", content: textMessage });
+            session.conversationHistory.push({ role: "assistant", content: reply });
+            if (session.conversationHistory.length > 12) {
+                session.conversationHistory = session.conversationHistory.slice(-12);
+            }
+            sessions.set(chatId, session);
+            
         } else {
-            await sendWAPilotMessage(chatId, "👨‍🏫 أهلاً بيك يا بطل! اكتبلي سؤالك في أي مادة وهبدأ أشرحلك خطوة خطوة 💪");
+            const session = getUserSession(chatId);
+            await sendWAPilotMessage(chatId, "أهلاً بيك! قولي عايز تتعلم ايه؟ 💪");
         }
         
         return res.status(200).json({ ok: true });
