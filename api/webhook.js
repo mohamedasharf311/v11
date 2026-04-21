@@ -9,50 +9,71 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 
 const MODEL = 'google/gemini-2.0-flash-001';
 
-// 9. الـ Prompt الجديد - مدرس حقيقي مش ChatGPT
+// الـ Prompt مع السياق
 const TEACHER_SYSTEM_PROMPT = `أنت مدرس صبور لطلاب المرحلة الإعدادية.
 
 أسلوبك:
 - اشرح ببساطة شديدة باللهجة المصرية
-- لو الطالب قال "اشرح براحة" → استخدم مثال بسيط جداً
-- اسأل الطالب "فهمت؟" أو "تحب نجرب سؤال؟"
-- لا تنتقل لسؤال جديد إلا بعد تأكيد الفهم
+- استخدم أمثلة من الحياة اليومية
+- اسأل الطالب "فهمت؟" بعد الشرح
 
 مهمتك:
 - أنت هنا للشرح فقط، مش لإدارة الأسئلة
 - النظام هو اللي هيسأل الأسئلة ويصحح الإجابات
-- لو الطالب وافق على سؤال، قوله "تمام، استنى السؤال من النظام"
+- متسألش أسئلة رياضية بنفسك
 
-ممنوع:
-- تسأل أسئلة رياضية بنفسك
-- تقول "اسألني في أي مادة"
-- تعمل reset في نص المحادثة`;
+الموضوع الحالي موجود في السياق، اشرح عليه بس.`;
 
-// 1. Intent Detection
+// 1. Intent Detection محسّن
 function detectIntent(message) {
     const msg = message.toLowerCase();
     
     if (msg.includes('اشرح') || msg.includes('شرح')) return 'explain';
     if (msg.match(/^\d+$/)) return 'answer';
     if (msg.includes('سؤال') || msg.includes('مسألة') || msg.includes('تحدي')) return 'practice';
-    if (msg.includes('فهمت') || msg.includes('ايوه') || msg.includes('اه') || msg.includes('تمام')) return 'confirm';
+    if (msg.includes('فهمت') || msg.includes('ايوه') || msg.includes('اه') || msg.includes('تمام') || msg.includes('نعم')) return 'confirm';
     
     return 'general';
 }
 
-// 2. Topic Detection
+// 2. Topic Detection محسّن - يدعم صيغ كتير
 function detectTopic(message) {
     const msg = message.toLowerCase();
     
-    if (msg.includes('جمع')) return 'addition';
-    if (msg.includes('طرح')) return 'subtraction';
-    if (msg.includes('ضرب')) return 'multiplication';
-    if (msg.includes('قسم')) return 'division';
-    if (msg.includes('انجليزي') || msg.includes('english')) return 'english';
-    if (msg.includes('علوم') || msg.includes('science')) return 'science';
-    if (msg.includes('عربي')) return 'arabic';
+    // جمع
+    if (msg.includes('جمع') || msg.includes('زائد') || msg.includes('+') || 
+        msg.includes('إضافة') || msg.includes('ضم')) return 'addition';
+    
+    // طرح
+    if (msg.includes('طرح') || msg.includes('ناقص') || msg.includes('-') || 
+        msg.includes('طرح') || msg.includes('اخذ') || msg.includes('صرف')) return 'subtraction';
+    
+    // ضرب
+    if (msg.includes('ضرب') || msg.includes('في') || msg.includes('x') || 
+        msg.includes('جدول')) return 'multiplication';
+    
+    // قسمة
+    if (msg.includes('قسم') || msg.includes('÷') || msg.includes('تقسيم')) return 'division';
     
     return null;
+}
+
+// دالة شرح الحل خطوة بخطوة
+function explainStepByStep(question, answer) {
+    // استخراج الأرقام من السؤال
+    const numbers = question.match(/\d+/g);
+    if (!numbers || numbers.length < 2) return `الحل الصحيح هو: ${answer}`;
+    
+    const num1 = parseInt(numbers[0]);
+    const num2 = parseInt(numbers[1]);
+    
+    if (question.includes('صرفت') || question.includes('ناقص') || question.includes('-')) {
+        // عملية طرح
+        return `📝 خلينا نفهمها خطوة بخطوة:\n\n${num1} - ${num2} = ؟\n\nنبدأ من ${num1}:\n`;
+    } else {
+        // عملية جمع
+        return `📝 خلينا نفهمها خطوة بخطوة:\n\n${num1} + ${num2} = ؟\n\nنبدأ من ${num1} ونضيف ${num2}:\n`;
+    }
 }
 
 // توليد أسئلة حسب المادة
@@ -64,6 +85,8 @@ function generateQuestionByTopic(session) {
     } else if (session.currentTopic === 'multiplication') {
         return generateMultiplicationQuestion(session);
     } else {
+        // لو مفيش مادة محددة، نسأل جمع
+        session.currentTopic = 'addition';
         return generateAdditionQuestion(session);
     }
 }
@@ -76,6 +99,7 @@ function generateAdditionQuestion(session) {
     session.correctAnswer = num1 + num2;
     session.mode = 'question';
     session.failCount = 0;
+    session.currentQuestionText = session.lastQuestion;
     
     return session.lastQuestion;
 }
@@ -88,6 +112,7 @@ function generateSubtractionQuestion(session) {
     session.correctAnswer = num1 - num2;
     session.mode = 'question';
     session.failCount = 0;
+    session.currentQuestionText = session.lastQuestion;
     
     return session.lastQuestion;
 }
@@ -100,11 +125,12 @@ function generateMultiplicationQuestion(session) {
     session.correctAnswer = num1 * num2;
     session.mode = 'question';
     session.failCount = 0;
+    session.currentQuestionText = session.lastQuestion;
     
     return session.lastQuestion;
 }
 
-// 4. معالجة الإجابات الرقمية
+// 3. معالجة الإجابات - متغيرش السؤال بعد الغلط
 function handleNumericAnswer(userMessage, session) {
     const numbers = userMessage.match(/\d+/g);
     if (!numbers) return null;
@@ -113,18 +139,22 @@ function handleNumericAnswer(userMessage, session) {
     
     if (session.mode === 'question' && session.correctAnswer !== null) {
         if (userAnswer === session.correctAnswer) {
+            // إجابة صحيحة
             session.failCount = 0;
             const newQuestion = generateQuestionByTopic(session);
             return `🔥 أداء قوي يا بطل! ✅ إجابة صح!\n\n${newQuestion}`;
         } else {
+            // إجابة غلط
             session.failCount++;
             
             if (session.failCount >= 2) {
+                // بعد محاولتين فاشلتين - نشرح نفس السؤال مش سؤال جديد
                 session.failCount = 0;
-                const newQuestion = generateQuestionByTopic(session);
-                return `📝 خلينا نفهمها صح:\n\nالسؤال: ${session.lastQuestion}\nالحل: ${session.correctAnswer}\n\nجهيز للسؤال الجاي؟ 💪\n\n${newQuestion}`;
+                const stepByStep = explainStepByStep(session.lastQuestion, session.correctAnswer);
+                return `${stepByStep}\nالحل الصحيح: ${session.correctAnswer}\n\nجهيز للسؤال الجاي؟ 💪\n\n${generateQuestionByTopic(session)}`;
             }
             
+            // أول مرة يغلط - نفس السؤال من غير تغيير
             return `قريب 👀 حاول تاني.\n\n${session.lastQuestion}`;
         }
     }
@@ -151,6 +181,7 @@ class UserSession {
         this.currentTopic = null;
         this.intent = null;
         this.waitingForConfirmation = false;
+        this.currentQuestionText = null;
     }
 }
 
@@ -171,6 +202,7 @@ async function chatWithAI(message, session) {
         
         const messages = [
             { role: "system", content: TEACHER_SYSTEM_PROMPT },
+            { role: "system", content: `الموضوع الحالي: ${session.currentTopic || 'عام'}. اشرح هذا الموضوع فقط.` },
             ...shortHistory,
             { role: "user", content: message }
         ];
@@ -235,7 +267,7 @@ module.exports = async (req, res) => {
             <head><title>بوت المدرس الصبور</title></head>
             <body style="font-family: Arial; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
                 <h1>👨‍🏫 بوت المدرس الصبور</h1>
-                <p>✅ شغال - نظام تصنيف ذكي</p>
+                <p>✅ شغال - شرح + أسئلة + تصحيح</p>
             </body>
             </html>
         `);
@@ -259,10 +291,7 @@ module.exports = async (req, res) => {
             const session = getUserSession(chatId);
             let reply = null;
             
-            // 1. اكتشاف النية
             session.intent = detectIntent(textMessage);
-            
-            // 2. اكتشاف المادة (تحافظ على المادة السابقة لو مش متغيرة)
             const newTopic = detectTopic(textMessage);
             if (newTopic) {
                 session.currentTopic = newTopic;
@@ -270,7 +299,7 @@ module.exports = async (req, res) => {
             
             console.log(`🎯 Intent: ${session.intent}, Topic: ${session.currentTopic}`);
             
-            // 4. Routing - أهم نقطة
+            // Routing
             if (session.intent === 'answer') {
                 reply = handleNumericAnswer(textMessage, session);
             }
@@ -287,7 +316,7 @@ module.exports = async (req, res) => {
             }
             
             else if (session.intent === 'confirm') {
-                if (session.waitingForConfirmation || textMessage.includes('ايوه') || textMessage.includes('اه')) {
+                if (session.waitingForConfirmation || textMessage.includes('ايوه') || textMessage.includes('اه') || textMessage.includes('تمام')) {
                     if (session.currentTopic) {
                         const question = generateQuestionByTopic(session);
                         reply = `🎯 تمام! جهيز للسؤال؟\n\n${question}`;
@@ -302,15 +331,20 @@ module.exports = async (req, res) => {
             
             else if (session.intent === 'practice') {
                 if (session.currentTopic) {
-                    const question = generateQuestionByTopic(session);
-                    reply = `🎯 يلا بينا!\n\n${question}`;
+                    // 5. منع practice لمواد مش مدعومة
+                    const supportedTopics = ['addition', 'subtraction', 'multiplication'];
+                    if (supportedTopics.includes(session.currentTopic)) {
+                        const question = generateQuestionByTopic(session);
+                        reply = `🎯 يلا بينا!\n\n${question}`;
+                    } else {
+                        reply = `📚 موضوع ${session.currentTopic} موجود للشرح حالياً، لكن التدريب عليه هيكون قريباً 🔥\n\nجرب تتدرب على جمع أو طرح دلوقتي؟`;
+                    }
                 } else {
                     reply = "قولي عايز تتدرب على ايه؟ (جمع - طرح - ضرب)";
                 }
             }
             
             else {
-                // general - أي كلام تاني
                 const aiReply = await chatWithAI(textMessage, session);
                 if (aiReply) {
                     reply = aiReply;
@@ -330,7 +364,6 @@ module.exports = async (req, res) => {
             
             await sendWAPilotMessage(chatId, reply);
             
-            // تحديث الـ history
             session.conversationHistory.push({ role: "user", content: textMessage });
             session.conversationHistory.push({ role: "assistant", content: reply });
             if (session.conversationHistory.length > 12) {
