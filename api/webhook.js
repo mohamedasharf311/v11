@@ -1,501 +1,457 @@
-// ========== SYSTEM CONFIGURATION ==========
-const OPENROUTER_API_KEY = 'your-api-key-here';
-const MODEL = 'meta-llama/llama-3.2-3b-instruct:free';
+// api/webhook.js
+const axios = require('axios');
 
-// ========== SESSION MANAGER ==========
-class SessionManager {
-    constructor() {
-        this.sessions = new Map();
+const INSTANCE_ID = "instance3532";
+const WAPILOT_TOKEN = "yzWzEjmxZpbifuOx6lWafYT3Ng69gaFpJGAdTsVc6N";
+const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
+
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
+
+const MODEL = 'google/gemini-2.0-flash-001';
+
+const TEACHER_SYSTEM_PROMPT = `أنت مدرس صبور لطلاب المرحلة الإعدادية.
+
+أسلوبك:
+- اشرح ببساطة شديدة باللهجة المصرية
+- استخدم أمثلة من الحياة اليومية
+
+مهمتك:
+- أنت هنا للشرح فقط
+- متسألش أسئلة بنفسك
+- رد على أسئلة الطالب في المواد المختلفة`;
+
+// 1. دالة Smart Detection (Rule-based أولاً)
+function smartDetect(message, session) {
+    const msg = message.toLowerCase().trim();
+    
+    // لو الرقم مرتبط بالسؤال الحالي
+    if (/^\d+$/.test(msg) && session.mode === 'question') {
+        console.log(`🔍 Rule-based: Number answer during question mode`);
+        return { subject: session.subject, intent: 'answer' };
     }
-
-    getSession(userId) {
-        if (!this.sessions.has(userId)) {
-            this.sessions.set(userId, {
-                subject: null,        // math, science, arabic, english, general
-                intent: null,         // explain, question, answer, practice, general
-                mode: null,           // teaching, testing, practicing
-                lastQuestion: null,   // آخر سؤال تم طرحه
-                lastSubject: null,    // آخر مادة تم التعامل معها
-                conversationHistory: [],
-                pendingAnswer: false   // هل ننتظر إجابة على سؤال؟
-            });
-        }
-        return this.sessions.get(userId);
+    
+    // كشف المسائل الرياضية (مثل: 5 + 3)
+    if (/\d+\s*[\+\-\*x÷]\s*\d+/.test(msg)) {
+        console.log(`🔍 Rule-based: Math equation detected`);
+        return { subject: 'math', intent: 'question' };
     }
-
-    updateSession(userId, updates) {
-        const session = this.getSession(userId);
-        Object.assign(session, updates);
+    
+    // كشف المواد والنية بالكلمات المفتاحية
+    // Math
+    if (msg.includes('جمع') || msg.includes('طرح') || msg.includes('ضرب') || 
+        msg.includes('قسمة') || msg.includes('زائد') || msg.includes('ناقص') ||
+        msg.includes('رياضيات') || msg.includes('حساب')) {
+        console.log(`🔍 Rule-based: Math topic detected`);
         
-        // تحديث سجل المحادثة
-        if (updates.lastMessage) {
-            session.conversationHistory.push({
-                message: updates.lastMessage,
-                timestamp: Date.now(),
-                subject: session.subject,
-                intent: session.intent
-            });
-            
-            // الاحتفاظ بآخر 20 رسالة فقط
-            if (session.conversationHistory.length > 20) {
-                session.conversationHistory.shift();
+        if (msg.includes('اشرح')) return { subject: 'math', intent: 'explain' };
+        if (msg.includes('تدرب') || msg.includes('سؤال')) return { subject: 'math', intent: 'practice' };
+        return { subject: 'math', intent: 'general' };
+    }
+    
+    // Science
+    if (msg.includes('علوم') || msg.includes('كيمياء') || msg.includes('فيزياء') ||
+        msg.includes('h2o') || msg.includes('ماء') || msg.includes('كهرباء') ||
+        msg.includes('حرارة') || msg.includes('ضوء') || msg.includes('خلية')) {
+        console.log(`🔍 Rule-based: Science topic detected`);
+        
+        if (msg.includes('اشرح')) return { subject: 'science', intent: 'explain' };
+        if (msg.includes('تدرب') || msg.includes('سؤال')) return { subject: 'science', intent: 'practice' };
+        return { subject: 'science', intent: 'general' };
+    }
+    
+    // Arabic
+    if (msg.includes('عربي') || msg.includes('نحو') || msg.includes('صرف') ||
+        msg.includes('بلاغة') || msg.includes('إملاء') || msg.includes('قواعد')) {
+        console.log(`🔍 Rule-based: Arabic topic detected`);
+        
+        if (msg.includes('اشرح')) return { subject: 'arabic', intent: 'explain' };
+        if (msg.includes('تدرب')) return { subject: 'arabic', intent: 'practice' };
+        return { subject: 'arabic', intent: 'general' };
+    }
+    
+    // English
+    if (msg.includes('انجليزي') || msg.includes('english') || msg.includes('grammar') ||
+        msg.includes('vocabulary') || msg.includes('ترجمة')) {
+        console.log(`🔍 Rule-based: English topic detected`);
+        
+        if (msg.includes('اشرح')) return { subject: 'english', intent: 'explain' };
+        if (msg.includes('تدرب')) return { subject: 'english', intent: 'practice' };
+        return { subject: 'english', intent: 'general' };
+    }
+    
+    // لو محددش حاجة، نرجع null عشان نستخدم AI
+    console.log(`🔍 Rule-based: No match, fallback to AI`);
+    return null;
+}
+
+// 2. AI Detection (Fallback)
+async function detectWithAI(message) {
+    const prompt = `حدد:
+1- المادة (math / science / arabic / english / general)
+2- نوع الرسالة (explain / question / answer / practice / general)
+
+مهم: ارجع JSON بس بدون أي كلام تاني
+
+مثال: {"subject": "math", "intent": "explain"}
+
+message: "${message}"`;
+
+    try {
+        const response = await axios.post(
+            'https://openrouter.ai/api/v1/chat/completions',
+            {
+                model: MODEL,
+                messages: [{ role: "user", content: prompt }],
+                temperature: 0,
+                max_tokens: 100
+            },
+            {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+                    'HTTP-Referer': 'https://school-gamma-ten.vercel.app',
+                    'X-Title': 'WhatsApp Teacher Bot'
+                },
+                timeout: 10000
             }
+        );
+        
+        const content = response.data?.choices?.[0]?.message?.content || '';
+        console.log(`🤖 AI detection response: ${content}`);
+        
+        // محاولة استخراج JSON من الرد
+        const jsonMatch = content.match(/\{.*\}/);
+        if (jsonMatch) {
+            return JSON.parse(jsonMatch[0]);
         }
         
-        this.sessions.set(userId, session);
-        return session;
+        return { subject: 'general', intent: 'general' };
+    } catch (error) {
+        console.log(`❌ AI detection failed:`, error.message);
+        return { subject: 'general', intent: 'general' };
     }
 }
 
-const sessionManager = new SessionManager();
+// 3. Auto Mode Switching
+async function processWithSmartDetection(message, session) {
+    // الأول نحاول Rule-based
+    let detection = smartDetect(message, session);
+    
+    // لو مش موجود، نستخدم AI
+    if (!detection) {
+        detection = await detectWithAI(message);
+    }
+    
+    console.log(`🎯 Final detection: Subject=${detection.subject}, Intent=${detection.intent}`);
+    
+    // حفظ في السيشن
+    if (detection.subject !== 'general') {
+        session.subject = detection.subject;
+    }
+    session.intent = detection.intent;
+    
+    // Auto Mode Switching
+    if (session.intent === 'answer' && session.mode === 'question') {
+        // هنعرفها في الـ routing
+        return { action: 'answer', detection };
+    }
+    
+    if (session.intent === 'explain') {
+        session.mode = 'explain';
+        return { action: 'explain', detection };
+    }
+    
+    if (session.intent === 'practice') {
+        session.mode = 'practice';
+        return { action: 'practice', detection };
+    }
+    
+    if (session.intent === 'question') {
+        session.mode = 'question';
+        return { action: 'question', detection };
+    }
+    
+    return { action: 'general', detection };
+}
 
-// ========== RULE-BASED DETECTION (سريع واقتصادي) ==========
-class RuleBasedDetector {
+// توليد أسئلة حسب المادة
+function generateQuestionByTopic(session) {
+    if (session.subject === 'addition' || (session.currentOperation === 'addition')) {
+        return generateAdditionQuestion(session);
+    } else if (session.subject === 'subtraction') {
+        return generateSubtractionQuestion(session);
+    } else if (session.subject === 'math') {
+        // افتراضي جمع
+        return generateAdditionQuestion(session);
+    }
+    return generateAdditionQuestion(session);
+}
+
+function generateAdditionQuestion(session) {
+    const num1 = Math.floor(Math.random() * 10) + 1;
+    const num2 = Math.floor(Math.random() * 10) + 1;
+    
+    session.lastQuestion = `🧮 لو معاك ${num1} تفاحات 🍎، وجبتلك ${num2} تفاحات تانيين، بقى معاك كام تفاحة؟`;
+    session.correctAnswer = num1 + num2;
+    session.mode = 'question';
+    session.failCount = 0;
+    session.subject = 'math';
+    session.currentOperation = 'addition';
+    
+    return session.lastQuestion;
+}
+
+function generateSubtractionQuestion(session) {
+    const num1 = Math.floor(Math.random() * 15) + 5;
+    const num2 = Math.floor(Math.random() * 5) + 1;
+    
+    session.lastQuestion = `🧮 لو معاك ${num1} جنيه 💰، وصرفت ${num2} جنيه، فضل معاك كام جنيه؟`;
+    session.correctAnswer = num1 - num2;
+    session.mode = 'question';
+    session.failCount = 0;
+    session.subject = 'math';
+    session.currentOperation = 'subtraction';
+    
+    return session.lastQuestion;
+}
+
+function handleNumericAnswer(userMessage, session) {
+    const numbers = userMessage.match(/\d+/g);
+    if (!numbers) return null;
+    
+    const userAnswer = parseInt(numbers[0]);
+    
+    if (session.mode === 'question' && session.correctAnswer !== null) {
+        if (userAnswer === session.correctAnswer) {
+            session.failCount = 0;
+            const newQuestion = generateQuestionByTopic(session);
+            return `🔥 أداء قوي يا بطل! ✅ إجابة صح!\n\n${newQuestion}`;
+        } else {
+            session.failCount++;
+            
+            if (session.failCount >= 2) {
+                session.failCount = 0;
+                const newQuestion = generateQuestionByTopic(session);
+                return `📝 خلينا نفهمها صح:\n\nالسؤال: ${session.lastQuestion}\nالحل: ${session.correctAnswer}\n\nجهيز للسؤال الجاي؟ 💪\n\n${newQuestion}`;
+            }
+            
+            return `قريب 👀 حاول تاني.\n\n${session.lastQuestion}`;
+        }
+    }
+    
+    return null;
+}
+
+function cleanResponse(text) {
+    if (!text || text.trim().length < 3) return null;
+    if (text.includes('```') || text.includes('function') || text.includes('const ')) {
+        return null;
+    }
+    return text.trim();
+}
+
+class UserSession {
     constructor() {
-        // قواعد المواد
-        this.subjectRules = {
-            math: {
-                keywords: ['رياضيات', 'حساب', 'جبر', 'هندسة', 'معادلة', 'رقم', 'عدد', 'مسألة', 'عملية حسابية'],
-                patterns: [
-                    /\d+[\+\-\*x÷]\d+/,           // 5+3
-                    /ما ناتج|كم ناتج|احسب|أوجد/,   // كم ناتج 5+3
-                    /جمع|طرح|ضرب|قسمة/,            // عمليات حسابية
-                    /معادلة|مجهول|س\s*=\s*\d+/     // معادلات
-                ]
-            },
-            science: {
-                keywords: ['علوم', 'فيزياء', 'كيمياء', 'أحياء', 'مادة', 'عنصر', 'مركب', 'طاقة', 'قوة', 'خلية', 'حامض', 'قاعدة'],
-                patterns: [
-                    /h2o|co2|nacl|الـ?ماء/i,      // مركبات كيميائية
-                    /الضوء|الصوت|الحرارة/,         // فيزياء
-                    /النبات|الحيوان|الإنسان/,      // أحياء
-                    /يتفاعل|ينتج|يتحول/            // تفاعلات
-                ]
-            },
-            arabic: {
-                keywords: ['عربي', 'لغة', 'نحو', 'صرف', 'بلاغة', 'إملاء', 'قواعد', 'فعل', 'اسم', 'حرف', 'جملة', 'إعراب'],
-                patterns: [
-                    /ما إعراب|أعرب|علامة إعراب/,
-                    /جمع|مفرد|مذكر|مؤنث/,
-                    /فعل ماض|فعل مضارع|فعل أمر/
-                ]
-            },
-            english: {
-                keywords: ['english', 'انجليزي', 'grammar', 'vocabulary', 'verb', 'noun', 'sentence', 'translation', 'ترجمة'],
-                patterns: [
-                    /what is|how to|translate/i,
-                    /past tense|present|future/i,
-                    /\b(is|am|are|was|were)\b.*\?/i
-                ]
-            }
-        };
-        
-        // قواعد النوايا
-        this.intentRules = {
-            explain: {
-                keywords: ['اشرح', 'شرح', 'وضح', 'فسر', 'عرف', 'ما معنى', 'كيف يعمل', 'ماذا يعني'],
-                patterns: [
-                    /ما هو|ما هي|ماذا/,           // ما هو الماء؟
-                    /كيف (يعمل|تحدث|تتكون)/,      // كيف تعمل الخلية؟
-                    /لماذا/                        // لماذا السماء زرقاء؟
-                ]
-            },
-            question: {
-                keywords: ['سؤال', 'حل', 'أوجد', 'احسب', 'كم', 'كم ناتج', 'ما حل', 'طريقة حل'],
-                patterns: [
-                    /^\d+[\+\-\*x÷]\d+/,           // 5+3
-                    /ما.*\?$/,                     // جملة استفهامية
-                    /كم يساوي/,                    // كم يساوي 5+3
-                    /أوجد قيمة/,                   // أوجد قيمة س
-                    /حل المسألة/                   // حل المسألة
-                ]
-            },
-            answer: {
-                keywords: ['الإجابة', 'الجواب', 'الناتج', 'الحل', 'يساوي'],
-                patterns: [
-                    /^\d+$/,                       // رقم فقط (ممكن يكون إجابة)
-                    /الناتج هو/,                   // الناتج هو 8
-                    /الإجابة الصحيحة/              // الإجابة الصحيحة هي...
-                ]
-            },
-            practice: {
-                keywords: ['تدرب', 'تمرين', 'تمارين', 'أريد حل', 'أريد مسائل', 'أختبر نفسي', 'أسئلة'],
-                patterns: [
-                    /أريد تمارين/,                 // أريد تمارين رياضيات
-                    /دربني على/,                   // دربني على الجمع
-                    /امتحان/,                      // امتحان في العلوم
-                    /اختبرني/                      // اختبرني في العربي
-                ]
-            }
-        };
+        this.mode = 'learning';
+        this.conversationHistory = [];
+        this.hasStarted = false;
+        this.lastQuestion = null;
+        this.correctAnswer = null;
+        this.failCount = 0;
+        this.subject = null;
+        this.intent = null;
+        this.currentOperation = null;
+        this.waitingForConfirmation = false;
     }
-    
-    detectSubject(message, session) {
-        const msg = message.toLowerCase();
-        
-        // 1. استخدام السياق السابق
-        if (session.lastSubject && this.isContextRelevant(msg, session)) {
-            return session.lastSubject;
-        }
-        
-        // 2. فحص القواعد
-        for (const [subject, rules] of Object.entries(this.subjectRules)) {
-            // فحص الكلمات المفتاحية
-            for (const keyword of rules.keywords) {
-                if (msg.includes(keyword)) {
-                    return subject;
-                }
-            }
-            
-            // فحص الأنماط
-            for (const pattern of rules.patterns) {
-                if (pattern.test(msg)) {
-                    return subject;
-                }
-            }
-        }
-        
-        return 'general';
+}
+
+const sessions = new Map();
+
+function getUserSession(chatId) {
+    if (!sessions.has(chatId)) {
+        sessions.set(chatId, new UserSession());
     }
-    
-    detectIntent(message, session) {
-        const msg = message.toLowerCase();
+    return sessions.get(chatId);
+}
+
+async function chatWithAI(message, session) {
+    try {
+        console.log(`🔄 AI explaining: ${session.subject}`);
         
-        // 1. حالة انتظار الإجابة
-        if (session.pendingAnswer && this.looksLikeAnswer(message, session)) {
-            return 'answer';
-        }
+        const shortHistory = session.conversationHistory.slice(-6);
         
-        // 2. أرقام فقط (قد تكون إجابة)
-        if (/^\d+(\.\d+)?$/.test(msg.trim())) {
-            if (session.lastQuestion && session.mode === 'question') {
-                return 'answer';
+        const messages = [
+            { role: "system", content: TEACHER_SYSTEM_PROMPT },
+            { role: "system", content: `الموضوع الحالي: ${session.subject || 'عام'}. اشرح هذا الموضوع فقط.` },
+            ...shortHistory,
+            { role: "user", content: message }
+        ];
+        
+        const response = await axios.post(
+            'https://openrouter.ai/api/v1/chat/completions',
+            {
+                model: MODEL,
+                messages: messages,
+                temperature: 0.7,
+                max_tokens: 500
+            },
+            {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+                    'HTTP-Referer': 'https://school-gamma-ten.vercel.app',
+                    'X-Title': 'WhatsApp Teacher Bot'
+                },
+                timeout: 20000
             }
-            return 'question';
+        );
+        
+        if (response.data?.choices?.[0]?.message?.content) {
+            let reply = response.data.choices[0].message.content;
+            const cleaned = cleanResponse(reply);
+            return cleaned || reply;
         }
         
-        // 3. فحص القواعد
-        for (const [intent, rules] of Object.entries(this.intentRules)) {
-            for (const keyword of rules.keywords) {
-                if (msg.includes(keyword)) {
-                    return intent;
-                }
-            }
-            
-            for (const pattern of rules.patterns) {
-                if (pattern.test(msg)) {
-                    return intent;
-                }
-            }
-        }
-        
-        // 4. الاستفهام التلقائي
-        if (msg.includes('؟') || msg.includes('?')) {
-            return 'question';
-        }
-        
-        return 'general';
+    } catch (error) {
+        console.log(`❌ AI failed:`, error.message);
     }
-    
-    isContextRelevant(message, session) {
-        // التحقق مما إذا كانت الرسالة مرتبطة بالسياق السابق
-        const timeSinceLastInteraction = Date.now() - (session.conversationHistory[session.conversationHistory.length - 1]?.timestamp || 0);
-        return timeSinceLastInteraction < 300000; // 5 دقائق
-    }
-    
-    looksLikeAnswer(message, session) {
-        const msg = message.toLowerCase();
-        
-        // إجابة برقم
-        if (/^\d+(\.\d+)?$/.test(msg.trim())) {
-            return true;
-        }
-        
-        // إجابة مختصرة
-        const shortAnswers = ['نعم', 'لا', 'صح', 'غلط', 'true', 'false', 'yes', 'no'];
-        if (shortAnswers.includes(msg)) {
-            return true;
-        }
-        
-        // إجابة مع وحدات
-        if (/\d+\s*(سم|م|كجم|لتر|ثانية|دقيقة|ساعة)/.test(msg)) {
-            return true;
-        }
-        
+    return null;
+}
+
+async function sendWAPilotMessage(chatId, text) {
+    try {
+        await axios.post(
+            `${WAPILOT_API_URL}/${INSTANCE_ID}/send-message`,
+            { chat_id: chatId, text: text },
+            { headers: { "token": WAPILOT_TOKEN, "Content-Type": "application/json" }, timeout: 10000 }
+        );
+        return true;
+    } catch (error) {
+        console.error('Error sending message:', error.message);
         return false;
     }
 }
 
-// ========== AI DETECTION (Fallback) ==========
-class AIDetector {
-    async detect(message, session) {
-        const prompt = `أنت محلل ذكي للمحتوى التعليمي. حلل الرسالة التالية وحدد:
-
-1. المادة (subject): math / science / arabic / english / general
-2. النية (intent): explain / question / answer / practice / general
-3. الثقة (confidence): رقم من 0 إلى 1
-
-الرسالة: "${message}"
-
-السياق السابق:
-- آخر مادة تمت مناقشتها: ${session.lastSubject || 'لا يوجد'}
-- آخر نية: ${session.intent || 'لا يوجد'}
-
-أجب فقط بصيغة JSON:
-{
-    "subject": "math",
-    "intent": "question",
-    "confidence": 0.95,
-    "reasoning": "الرسالة تحتوي على عملية حسابية"
-}`;
-
-        try {
-            const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
-                model: MODEL,
-                messages: [{ role: "user", content: prompt }],
-                temperature: 0,
-                max_tokens: 200
-            }, {
-                headers: {
-                    'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-                    'Content-Type': 'application/json'
-                },
-                timeout: 5000 // 5 ثواني كحد أقصى
-            });
-            
-            const content = response.data.choices[0].message.content;
-            const parsed = JSON.parse(content);
-            return parsed;
-        } catch (error) {
-            console.error('AI Detection failed:', error.message);
-            return {
-                subject: 'general',
-                intent: 'general',
-                confidence: 0,
-                reasoning: 'Fallback to general'
-            };
-        }
-    }
-}
-
-// ========== MAIN DETECTOR (Hybrid) ==========
-class SmartDetector {
-    constructor() {
-        this.ruleDetector = new RuleBasedDetector();
-        this.aiDetector = new AIDetector();
-    }
+module.exports = async (req, res) => {
+    const url = req.url || '';
+    const method = req.method || 'GET';
     
-    async detect(message, userId) {
-        const session = sessionManager.getSession(userId);
-        const startTime = Date.now();
+    if (method === 'GET' && url === '/api/webhook') {
+        return res.status(200).json({ status: 'active' });
+    }
+
+    if (method === 'GET' && (url === '/' || url === '')) {
+        return res.status(200).send(`
+            <!DOCTYPE html>
+            <html dir="rtl">
+            <head><title>بوت المدرس الصبور - Hybrid AI</title></head>
+            <body style="font-family: Arial; text-align: center; padding: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                <h1>👨‍🏫 بوت المدرس الصبور</h1>
+                <p>✅ Hybrid System: Rule-based + AI</p>
+                <p>🎯 يدعم: Math - Science - Arabic - English</p>
+            </body>
+            </html>
+        `);
+    }
+
+    if (method === 'POST' && url === '/api/webhook') {
+        const data = req.body;
+        let rawChatId = null, textMessage = null;
         
-        // الخطوة 1: المحاولة بالقواعد أولاً (سريعة)
-        let subject = this.ruleDetector.detectSubject(message, session);
-        let intent = this.ruleDetector.detectIntent(message, session);
-        let method = 'rule-based';
-        let confidence = 0.7; // ثقة افتراضية للقواعد
+        if (data.payload) {
+            rawChatId = data.payload.from || data.payload.chatId;
+            textMessage = data.payload.body || data.payload.text || '';
+        }
         
-        // الخطوة 2: التحقق من جودة الكشف بالقواعد
-        const needsAIFallback = (
-            subject === 'general' || 
-            intent === 'general' ||
-            (subject === 'general' && intent === 'general')
-        );
+        if (!rawChatId) return res.status(200).json({ ok: false });
+        let chatId = rawChatId.includes('@') ? rawChatId : `${rawChatId}@c.us`;
         
-        // الخطوة 3: استخدام AI كـ Fallback فقط عند الحاجة
-        if (needsAIFallback) {
-            const aiResult = await this.aiDetector.detect(message, session);
+        console.log(`📨 Received: "${textMessage}" from ${chatId}`);
+        
+        if (textMessage && textMessage.trim()) {
+            const session = getUserSession(chatId);
+            let reply = null;
             
-            if (aiResult.confidence > 0.6) { // فقط إذا كان AI واثق
-                subject = aiResult.subject;
-                intent = aiResult.intent;
-                method = 'ai-fallback';
-                confidence = aiResult.confidence;
+            // 4. استخدام Smart Detection
+            const { action, detection } = await processWithSmartDetection(textMessage, session);
+            
+            console.log(`🎯 Action: ${action}, Subject: ${detection.subject}, Intent: ${detection.intent}`);
+            
+            // 5. التعامل مع كل action
+            if (action === 'answer') {
+                reply = handleNumericAnswer(textMessage, session);
             }
-        }
-        
-        // الخطوة 4: تحديث الجلسة
-        sessionManager.updateSession(userId, {
-            subject: subject,
-            intent: intent,
-            lastSubject: subject,
-            lastMessage: message,
-            lastQuestion: intent === 'question' ? message : session.lastQuestion,
-            pendingAnswer: intent === 'question'
-        });
-        
-        const detectionTime = Date.now() - startTime;
-        
-        return {
-            subject,
-            intent,
-            method,
-            confidence,
-            detectionTime,
-            session: sessionManager.getSession(userId)
-        };
-    }
-    
-    // دالة لتغيير المود تلقائياً
-    determineMode(subject, intent) {
-        if (subject === 'math') {
-            if (intent === 'question') return 'solving';
-            if (intent === 'practice') return 'practicing';
-            return 'teaching';
-        }
-        
-        if (subject === 'science') {
-            if (intent === 'explain') return 'explaining';
-            if (intent === 'question') return 'qna';
-            return 'teaching';
-        }
-        
-        if (subject === 'arabic' || subject === 'english') {
-            if (intent === 'explain') return 'grammar';
-            if (intent === 'practice') return 'exercises';
-            return 'language';
-        }
-        
-        return 'general';
-    }
-}
-
-// ========== RESPONSE GENERATOR ==========
-class ResponseGenerator {
-    generateResponse(detection, message) {
-        const { subject, intent, method, confidence, session } = detection;
-        const mode = new SmartDetector().determineMode(subject, intent);
-        
-        let response = '';
-        
-        // إظهار معلومات التشخيص (للتطوير)
-        const debug = `[${subject} | ${intent} | ${method} | ${(confidence * 100).toFixed(0)}% | ${mode}]`;
-        
-        switch (subject) {
-            case 'math':
-                if (intent === 'question') {
-                    response = `🧮 سؤال رياضي جميل! دعني أساعدك في حله.\n${message}\n\nما هي خطوات الحل التي فكرت فيها؟`;
-                } else if (intent === 'explain') {
-                    response = `📐 شرح قاعدة رياضية:\n${message}\n\nهل تريد أمثلة تطبيقية؟`;
-                } else if (intent === 'practice') {
-                    response = `📝 تمارين رياضيات:\nسأعطيك 3 مسائل تدريبية...`;
+            
+            else if (action === 'explain') {
+                const aiReply = await chatWithAI(textMessage, session);
+                if (aiReply) {
+                    reply = aiReply + "\n\n📌 فهمت كده؟ 👀 تحب نجرب سؤال بسيط؟";
+                    session.waitingForConfirmation = true;
                 } else {
-                    response = `🧮 في الرياضيات:\n${message}\n\nهل تريد شرحًا أم حل المسائل؟`;
+                    reply = "👨‍🏫 خليني أشرحلك ببساطة. قولي عايز تفهم ايه بالضبط؟";
                 }
-                break;
-                
-            case 'science':
-                if (intent === 'explain') {
-                    response = `🔬 شرح علمي رائع:\n${message}\n\nهل هناك تفصيل معين تريد معرفته؟`;
-                } else if (intent === 'question') {
-                    response = `⚛️ سؤال علمي مهم:\n${message}\n\nدعني أوضح لك الإجابة بالتفصيل...`;
+            }
+            
+            else if (action === 'practice') {
+                if (detection.subject === 'math') {
+                    const question = generateQuestionByTopic(session);
+                    reply = `🎯 يلا بينا نتدرب!\n\n${question}`;
                 } else {
-                    response = `🔭 في العلوم:\n${message}\n\nماذا تريد أن تعرف بالضبط؟`;
+                    reply = `📚 موضوع ${detection.subject} موجود للشرح حالياً، لكن التدريب عليه هيكون قريباً 🔥\n\nجرب تطلب شرح دلوقتي؟`;
                 }
-                break;
-                
-            case 'arabic':
-                response = `📖 في اللغة العربية:\n${message}\n\nكيف يمكنني مساعدتك في النحو أو البلاغة؟`;
-                break;
-                
-            case 'english':
-                response = `🇬🇧 In English:\n${message}\n\nHow can I help you with grammar or vocabulary?`;
-                break;
-                
-            default:
-                if (intent === 'answer') {
-                    response = `✅ إجابة جيدة!\n${message}\n\nهل تريد التأكد من الإجابة؟`;
+            }
+            
+            else if (action === 'question') {
+                // لو كتب مسألة زي 5+3، نحلها
+                const mathMatch = textMessage.match(/(\d+)\s*([\+\-\*x÷])\s*(\d+)/);
+                if (mathMatch) {
+                    const num1 = parseInt(mathMatch[1]);
+                    const op = mathMatch[2];
+                    const num2 = parseInt(mathMatch[3]);
+                    let result;
+                    if (op === '+' || op === 'x' && mathMatch[2] === 'x') {
+                        result = num1 + num2;
+                    } else if (op === '-') {
+                        result = num1 - num2;
+                    } else if (op === '*' || op === 'x') {
+                        result = num1 * num2;
+                    }
+                    reply = `📝 ${num1} ${op} ${num2} = ${result}\n\nعايز أشرحلك ازاي جبنا الناتج؟ 👀`;
                 } else {
-                    response = `💡 ${message}\n\nكيف يمكنني مساعدتك بشكل أفضل؟ حدد المادة (رياضيات/علوم/عربي/إنجليزي)`;
+                    reply = "واضح إنك عايز تحل مسألة 👀\nاكتب المسألة واضحة وهساعدك تحلها خطوة خطوة";
                 }
+            }
+            
+            else {
+                // general
+                const aiReply = await chatWithAI(textMessage, session);
+                if (aiReply) {
+                    reply = aiReply;
+                } else {
+                    reply = "👨‍🏫 أهلاً بيك! قولي عايز تتعلم ايه؟ (رياضيات - علوم - عربي - إنجليزي)";
+                    session.hasStarted = true;
+                }
+            }
+            
+            if (!reply) {
+                reply = "👨‍🏫 قولي عايز تتعلم ايه بالضبط؟";
+            }
+            
+            await sendWAPilotMessage(chatId, reply);
+            
+            session.conversationHistory.push({ role: "user", content: textMessage });
+            session.conversationHistory.push({ role: "assistant", content: reply });
+            if (session.conversationHistory.length > 12) {
+                session.conversationHistory = session.conversationHistory.slice(-12);
+            }
+            sessions.set(chatId, session);
+            
+        } else {
+            await sendWAPilotMessage(chatId, "👨‍🏫 أهلاً بيك! قولي عايز تتعلم ايه؟");
         }
         
-        // إضافة اقتراحات ذكية
-        if (confidence < 0.7) {
-            response += `\n\n🤔 هل تقصد سؤالاً في ${subject === 'general' ? 'مادة معينة' : subject}؟`;
-        }
-        
-        if (method === 'ai-fallback') {
-            response += `\n\n✨ (تم استخدام الذكاء الاصطناعي لفهم سؤالك بشكل أفضل)`;
-        }
-        
-        return {
-            text: response,
-            debug: debug,
-            mode: mode,
-            detection: detection
-        };
-    }
-}
-
-// ========== MAIN BOT CLASS ==========
-class SmartBot {
-    constructor() {
-        this.detector = new SmartDetector();
-        this.responseGenerator = new ResponseGenerator();
+        return res.status(200).json({ ok: true });
     }
     
-    async processMessage(message, userId) {
-        if (!message || message.trim() === '') {
-            return { text: 'الرجاء كتابة رسالة للمساعدة', debug: '[empty]' };
-        }
-        
-        // كشف النية والمادة
-        const detection = await this.detector.detect(message, userId);
-        
-        // توليد الرد
-        const response = this.responseGenerator.generateResponse(detection, message);
-        
-        return response;
-    }
-    
-    // دالة للحصول على حالة الجلسة الحالية
-    getSessionStatus(userId) {
-        return sessionManager.getSession(userId);
-    }
-    
-    // دالة لإعادة ضبط الجلسة
-    resetSession(userId) {
-        sessionManager.updateSession(userId, {
-            subject: null,
-            intent: null,
-            mode: null,
-            lastQuestion: null,
-            lastSubject: null,
-            conversationHistory: [],
-            pendingAnswer: false
-        });
-        return { message: 'تم إعادة ضبط الجلسة بنجاح', userId };
-    }
-}
-
-// ========== EXPORTS & USAGE ==========
-const bot = new SmartBot();
-
-// مثال على الاستخدام
-async function test() {
-    console.log('🤖 بدء اختبار البوت الذكي...\n');
-    
-    const testMessages = [
-        '3 + 5',                          // Math + Question
-        'اشرح لي H2O',                    // Science + Explain
-        '12',                             // Math + Answer (بالسياق)
-        'عايز أتدرب على الجمع',            // Math + Practice
-        'ما إعراب كلمة "الكتاب"؟',        // Arabic + Question
-        'مرحباً',                         // General + General
-        '5 * 7'                           // Math + Question
-    ];
-    
-    for (const msg of testMessages) {
-        console.log(`\n👤 المستخدم: ${msg}`);
-        const response = await bot.processMessage(msg, 'test-user-1');
-        console.log(`🤖 البوت: ${response.text}`);
-        console.log(`📊 التشخيص: ${response.debug}\n`);
-        console.log('─'.repeat(50));
-    }
-}
-
-// تشغيل الاختبار
-// test();
-
-module.exports = { SmartBot, sessionManager, bot };
+    res.status(404).send('Not Found');
+};
