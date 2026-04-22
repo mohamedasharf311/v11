@@ -7,18 +7,33 @@ const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 
-const MODEL = 'google/gemini-2.0-flash-001';
+// 🔥 استخدام Llama 3.3 70B - أقوى موديل من Meta
+const MODEL = 'meta-llama/llama-3.3-70b-instruct';
+
+// الموديلات البديلة لو فشل الأساسي
+const FALLBACK_MODELS = [
+    'meta-llama/llama-3.2-3b-instruct',
+    'meta-llama/llama-3.1-8b-instruct',
+    'google/gemini-2.0-flash-001',
+    'qwen/qwen-2.5-7b-instruct'
+];
 
 const TEACHER_SYSTEM_PROMPT = `أنت مدرس صبور لطلاب المرحلة الإعدادية.
 
 أسلوبك:
 - اشرح ببساطة شديدة باللهجة المصرية
 - استخدم أمثلة من الحياة اليومية
+- خلي كلامك واضح وسهل
 
 مهمتك:
 - أنت هنا للشرح فقط
 - متسألش أسئلة بنفسك
-- رد على أسئلة الطالب مباشرة واشرح المطلوب بالتفصيل`;
+- رد على أسئلة الطالب مباشرة واشرح المطلوب بالتفصيل
+
+شخصيتك:
+- ودود ومشجع
+- مبتسم (استخدم الإيموجي المناسب)
+- فخور بتقدم الطالب`;
 
 // رسائل تحفيزية
 const motivationalMessages = {
@@ -32,11 +47,11 @@ function getMotivationalMessage(subject) {
     return messages[Math.floor(Math.random() * messages.length)];
 }
 
-// 1. Smart Detection محسنة - Priority للشرح
+// 1. Smart Detection
 function smartDetect(message, session) {
     const msg = message.toLowerCase().trim();
     
-    // أولاً: التحيات
+    // التحيات
     if (msg.includes('مساء الخير')) {
         return { subject: 'general', intent: 'greeting', response: "🌙 مساء النور يا بطل! عامل إيه النهاردة؟" };
     }
@@ -47,93 +62,63 @@ function smartDetect(message, session) {
         return { subject: 'general', intent: 'greeting', response: "😊 أهلاً بيك يا بطل! النهاردة هنتعلم ايه؟" };
     }
     
-    // ثانياً: أسئلة معرفية (شرح) - دي أهم حاجة
+    // أسئلة معرفية (شرح)
     const isQuestion = msg.startsWith('ايه') || msg.startsWith('ما هو') || 
                        msg.includes('يعني') || msg.includes('رمز') ||
                        msg.includes('اشرح') || msg.includes('شرح') ||
                        msg.includes('ماذا') || msg.includes('كيف');
     
     if (isQuestion) {
-        console.log(`🔍 Question/Explain detected: ${msg}`);
-        
-        // تحديد المادة من السؤال
         if (msg.includes('h2o') || msg.includes('ماء') || msg.includes('الماء')) {
             return { subject: 'science', intent: 'explain', topic: 'h2o' };
         }
-        if (msg.includes('كوكب') || msg.includes('الارض') || msg.includes('القمر')) {
+        if (msg.includes('كوكب') || msg.includes('الارض')) {
             return { subject: 'science', intent: 'explain', topic: 'planet' };
         }
         if (msg.includes('جاذبية') || msg.includes('نيوتن')) {
             return { subject: 'science', intent: 'explain', topic: 'gravity' };
         }
-        if (msg.includes('جمع') || msg.includes('جمع')) {
-            return { subject: 'math', intent: 'explain', operation: 'addition' };
-        }
-        if (msg.includes('طرح')) {
-            return { subject: 'math', intent: 'explain', operation: 'subtraction' };
-        }
-        if (msg.includes('قسمة')) {
-            return { subject: 'math', intent: 'explain', operation: 'division' };
-        }
-        
         return { subject: session.subject || 'general', intent: 'explain' };
     }
     
-    // ثالثاً: طلب مسألة/سؤال/تدريب
+    // طلب مسألة/سؤال
     if (msg.includes('مسألة') || msg.includes('سؤال') || 
         msg.includes('اديني') || msg.includes('هات') ||
-        msg.includes('عايز سؤال') || msg.includes('تدريب') ||
-        msg.includes('اتدرب')) {
+        msg.includes('عايز سؤال') || msg.includes('تدريب')) {
         return { subject: session.subject || 'math', intent: 'practice' };
     }
     
-    // رابعاً: تحديد المواد للتدريب
+    // تحديد المواد
     if (msg.includes('علوم')) {
-        session.subject = 'science';
         return { subject: 'science', intent: 'practice' };
     }
-    
-    if (msg.includes('عربي')) {
-        session.subject = 'arabic';
-        return { subject: 'arabic', intent: 'practice' };
-    }
-    
-    if (msg.includes('انجليزي')) {
-        session.subject = 'english';
-        return { subject: 'english', intent: 'practice' };
-    }
-    
     if (msg.includes('رياضيات') || msg.includes('حساب')) {
-        session.subject = 'math';
         return { subject: 'math', intent: 'practice' };
     }
     
-    // خامساً: العمليات الحسابية للرياضيات
+    // العمليات الحسابية
     if (msg.includes('جمع')) {
         session.currentOperation = 'addition';
         if (msg.includes('اشرح')) return { subject: 'math', intent: 'explain', operation: 'addition' };
         return { subject: 'math', intent: 'practice', operation: 'addition' };
     }
-    
     if (msg.includes('طرح')) {
         session.currentOperation = 'subtraction';
         if (msg.includes('اشرح')) return { subject: 'math', intent: 'explain', operation: 'subtraction' };
         return { subject: 'math', intent: 'practice', operation: 'subtraction' };
     }
-    
     if (msg.includes('ضرب')) {
         session.currentOperation = 'multiplication';
         if (msg.includes('اشرح')) return { subject: 'math', intent: 'explain', operation: 'multiplication' };
         return { subject: 'math', intent: 'practice', operation: 'multiplication' };
     }
-    
     if (msg.includes('قسمة')) {
         session.currentOperation = 'division';
         if (msg.includes('اشرح')) return { subject: 'math', intent: 'explain', operation: 'division' };
         return { subject: 'math', intent: 'practice', operation: 'division' };
     }
     
-    // سادساً: لو في وضع سؤال وجاوب برقم
+    // إجابة رقمية
     if (/^\d+$/.test(msg) && session.mode === 'question') {
         return { subject: session.subject || 'math', intent: 'answer' };
     }
@@ -141,7 +126,7 @@ function smartDetect(message, session) {
     return null;
 }
 
-// 2. وظائف الشرح للمواد المختلفة
+// 2. وظائف الشرح المخصصة
 async function getScienceExplanation(topic, message) {
     if (topic === 'h2o' || message.toLowerCase().includes('h2o')) {
         return `💧 **H2O ده رمز الماء!**
@@ -177,9 +162,7 @@ async function getScienceExplanation(topic, message) {
 
 العالم إسحاق نيوتن هو اللي اكتشف الجاذبية لما شاف تفاحة بتقع من الشجرة.
 
-الجاذبية هي قوة بتجذب الأجسام نحو الأرض. يعني هي السبب إننا بنقف على الأرض وما بنطيرش في الهوا!
-
-كتلة الأرض كبيرة جداً، فبتجذب كل حاجة ليها بقوة.`;
+الجاذبية هي قوة بتجذب الأجسام نحو الأرض. يعني هي السبب إننا بنقف على الأرض وما بنطيرش في الهوا!`;
     }
     
     return null;
@@ -187,12 +170,11 @@ async function getScienceExplanation(topic, message) {
 
 async function getMathExplanation(operation, message) {
     if (operation === 'addition' || message.toLowerCase().includes('جمع')) {
-        return `🧮 **الجمع** هو إنك بتضيف رقمين أو أكتر مع بعض عشان تعرف الناتج الكلي.
+        return `🧮 **الجمع** هو إنك بتضيف رقمين أو أكتر مع بعض.
 
 مثال: 3 تفاحات 🍎 + 2 تفاحات 🍎 = 5 تفاحات 🍎🍎🍎🍎🍎
 
 علامة الجمع هي (+)`;
-
     }
     
     if (operation === 'subtraction' || message.toLowerCase().includes('طرح')) {
@@ -214,18 +196,7 @@ async function getMathExplanation(operation, message) {
     return null;
 }
 
-// 3. توليد أسئلة لكل مادة
-function generateScienceQuestion() {
-    const questions = [
-        "🌍 ايه هو الكوكب اللي بنعيش عليه؟ (الأرض - المريخ - الزهرة)",
-        "💧 ايه هو رمز الماء؟ (H2O - CO2 - O2)",
-        "🌞 ايه مصدر الضوء والحرارة الأساسي على الأرض؟ (القمر - الشمس - النجوم)",
-        "🍎 مين اللي اكتشف الجاذبية الأرضية؟ (نيوتن - أينشتاين - جاليليو)",
-        "🌿 ايه العملية اللي النباتات بتعملها عشان تصنع غذائها؟ (البناء الضوئي - التنفس - النتح)"
-    ];
-    return questions[Math.floor(Math.random() * questions.length)];
-}
-
+// 3. توليد الأسئلة
 function generateMathQuestion(session) {
     const level = Math.min(session.level, 10);
     const max = level * 5;
@@ -259,15 +230,19 @@ function generateMathQuestion(session) {
     return session.lastQuestion;
 }
 
+function generateScienceQuestion() {
+    const questions = [
+        "🌍 ايه هو الكوكب اللي بنعيش عليه؟ (الأرض - المريخ - الزهرة)",
+        "💧 ايه هو رمز الماء؟ (H2O - CO2 - O2)",
+        "🌞 ايه مصدر الضوء والحرارة الأساسي على الأرض؟ (القمر - الشمس - النجوم)",
+        "🍎 مين اللي اكتشف الجاذبية الأرضية؟ (نيوتن - أينشتاين - جاليليو)"
+    ];
+    return questions[Math.floor(Math.random() * questions.length)];
+}
+
 function generateQuestionByTopic(session) {
     if (session.subject === 'science') {
         return generateScienceQuestion();
-    }
-    if (session.subject === 'arabic') {
-        return "📚 اعرب كلمة (الولد) في جملة: ذهب الولد إلى المدرسة";
-    }
-    if (session.subject === 'english') {
-        return "🇬🇧 What is the past tense of 'go'? (went - gone - going)";
     }
     return generateMathQuestion(session);
 }
@@ -295,6 +270,50 @@ function handleAnswer(userMessage, session) {
             return `قريب 👀 حاول تاني.\n\n${session.lastQuestion}`;
         }
     }
+    return null;
+}
+
+// 5. AI للشرح (Llama 3.3 70B)
+async function chatWithAI(message, session) {
+    // تجربة الموديل الأساسي أولاً
+    for (const model of [MODEL, ...FALLBACK_MODELS]) {
+        try {
+            console.log(`🔄 Trying model: ${model}`);
+            
+            const messages = [
+                { role: "system", content: TEACHER_SYSTEM_PROMPT },
+                { role: "user", content: `اشرحلي بالتفصيل وباللهجة المصرية: ${message}` }
+            ];
+            
+            const response = await axios.post(
+                'https://openrouter.ai/api/v1/chat/completions',
+                {
+                    model: model,
+                    messages: messages,
+                    temperature: 0.7,
+                    max_tokens: 600
+                },
+                {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+                        'HTTP-Referer': 'https://school-gamma-ten.vercel.app',
+                        'X-Title': 'WhatsApp Teacher Bot'
+                    },
+                    timeout: 20000
+                }
+            );
+            
+            if (response.data?.choices?.[0]?.message?.content) {
+                console.log(`✅ Success with ${model}`);
+                return response.data.choices[0].message.content;
+            }
+            
+        } catch (error) {
+            console.log(`❌ ${model} failed:`, error.message);
+        }
+    }
+    
     return null;
 }
 
@@ -330,42 +349,6 @@ function getUserSession(chatId) {
     return sessions.get(chatId);
 }
 
-async function chatWithAI(message, session) {
-    try {
-        const messages = [
-            { role: "system", content: TEACHER_SYSTEM_PROMPT },
-            { role: "user", content: `اشرحلي: ${message}` }
-        ];
-        
-        const response = await axios.post(
-            'https://openrouter.ai/api/v1/chat/completions',
-            {
-                model: MODEL,
-                messages: messages,
-                temperature: 0.7,
-                max_tokens: 400
-            },
-            {
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-                    'HTTP-Referer': 'https://school-gamma-ten.vercel.app',
-                    'X-Title': 'WhatsApp Teacher Bot'
-                },
-                timeout: 20000
-            }
-        );
-        
-        if (response.data?.choices?.[0]?.message?.content) {
-            return cleanResponse(response.data.choices[0].message.content);
-        }
-        
-    } catch (error) {
-        console.log(`❌ AI failed:`, error.message);
-    }
-    return null;
-}
-
 async function sendWAPilotMessage(chatId, text) {
     try {
         await axios.post(
@@ -392,10 +375,11 @@ module.exports = async (req, res) => {
         return res.status(200).send(`
             <!DOCTYPE html>
             <html dir="rtl">
-            <head><title>بوت المدرس الصبور</title></head>
+            <head><title>بوت المدرس الصبور - Llama 3.3 70B</title></head>
             <body style="font-family: Arial; text-align: center; padding: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
                 <h1>👨‍🏫 بوت المدرس الصبور</h1>
-                <p>✅ شغال - شرح + أسئلة</p>
+                <p>✅ شغال على Llama 3.3 70B - أقوى موديل من Meta</p>
+                <p>🎯 يدعم: رياضيات، علوم، شرح، أسئلة</p>
             </body>
             </html>
         `);
@@ -419,17 +403,13 @@ module.exports = async (req, res) => {
             const session = getUserSession(chatId);
             let reply = null;
             
-            // حفظ المادة القديمة للـ Smart Exit
             const prevSubject = session.subject;
-            
-            // Detection
             let detection = smartDetect(textMessage, session);
             
             if (!detection) {
                 detection = { subject: session.subject, intent: 'general' };
             }
             
-            // تحديث المادة
             if (detection.subject && detection.subject !== 'general') {
                 session.subject = detection.subject;
             }
@@ -438,7 +418,7 @@ module.exports = async (req, res) => {
                 session.currentOperation = detection.operation;
             }
             
-            // Smart Exit - لو غير المادة أثناء وضع السؤال
+            // Smart Exit
             if (prevSubject && detection.subject !== prevSubject && session.mode === 'question') {
                 session.mode = 'learning';
                 session.lastQuestion = null;
@@ -448,7 +428,7 @@ module.exports = async (req, res) => {
             
             console.log(`🎯 Subject: ${session.subject}, Intent: ${detection.intent}, Mode: ${session.mode}`);
             
-            // التعامل حسب الـ intent
+            // المعالجة
             if (detection.intent === 'answer') {
                 reply = handleAnswer(textMessage, session);
                 if (!reply && session.lastQuestion) {
@@ -457,7 +437,6 @@ module.exports = async (req, res) => {
             }
             
             else if (detection.intent === 'explain') {
-                // محاولة شرح من الـ functions المخصصة
                 let explanation = await getScienceExplanation(detection.topic, textMessage);
                 if (!explanation) {
                     explanation = await getMathExplanation(detection.operation, textMessage);
@@ -488,7 +467,7 @@ module.exports = async (req, res) => {
             }
             
             else {
-                reply = `👨‍🏫 قولي عايز تتعلم ايه؟\n\nمتاح: رياضيات - علوم - عربي - إنجليزي\nأو اكتب "اديني سؤال" عشان نبدأ تدريب`;
+                reply = `👨‍🏫 قولي عايز تتعلم ايه؟\n\nمتاح: رياضيات - علوم\nأو اكتب "اديني سؤال" عشان نبدأ تدريب`;
             }
             
             if (!reply) {
