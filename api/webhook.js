@@ -7,27 +7,30 @@ const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 
-// 🔥 استخدام DeepSeek V3 - موديل ثابت وقوي
-const MODEL = 'deepseek/deepseek-chat-v3-0324';
+// 🔥 موديلات متعددة مع fallback ذكي
+const MODELS_TO_TRY = [
+    'deepseek/deepseek-chat-v3-0324',  // الأساسي - قوي في الشرح
+    'google/gemini-2.0-flash-001',     // سريع
+    'openai/gpt-4o-mini'              // متوازن
+];
 
-// موديل احتياطي لو فشل الأساسي
-const FALLBACK_MODEL = 'deepseek/deepseek-r1';
+// 🎯 نظام prompt شامل لكل المواد
+const TEACHER_SYSTEM_PROMPT = `أنت مدرس شامل لكل المواد (رياضيات - علوم - كيمياء - فيزياء - لغة عربية - إنجليزي - تاريخ - جغرافيا).
 
-const TEACHER_SYSTEM_PROMPT = `أنت مدرس صبور لطلاب المرحلة الإعدادية.
+مهمتك الأساسية:
+- تشرح أي سؤال من الطالب مهما كان المجال
+- تبسط المعلومة جداً باستخدام اللهجة المصرية
+- تستخدم أمثلة من الحياة اليومية
+- متخرجش بره الموضوع المطلوب
+- متقولش "قولي عايز تتعلم ايه" أبداً
 
-أسلوبك:
-- اشرح ببساطة شديدة باللهجة المصرية
-- استخدم أمثلة من الحياة اليومية
-- خلي كلامك واضح وسهل
-
-مهمتك:
-- أنت هنا للشرح فقط
-- متسألش أسئلة بنفسك
-- رد على أسئلة الطالب مباشرة واشرح المطلوب بالتفصيل
+لو السؤال نظري → اشرح بالتفصيل
+لو عملي → وضح بخطوات
+لو طلب معلومات (زي "قولي 5 عناصر كيمياء") → اشرح واذكرهم بالتفصيل
 
 شخصيتك:
-- ودود ومشجع
-- مبتسم (استخدم الإيموجي المناسب)
+- ودود ومشجع جداً
+- استخدم الإيموجي المناسب
 - فخور بتقدم الطالب`;
 
 // رسائل تحفيزية
@@ -42,7 +45,7 @@ function getMotivationalMessage(subject) {
     return messages[Math.floor(Math.random() * messages.length)];
 }
 
-// 1. Smart Detection
+// 🧠 1. Smart Detection مطور جداً
 function smartDetect(message, session) {
     const msg = message.toLowerCase().trim();
     
@@ -57,26 +60,23 @@ function smartDetect(message, session) {
         return { subject: 'general', intent: 'greeting', response: "😊 أهلاً بيك يا بطل! النهاردة هنتعلم ايه؟" };
     }
     
-    // أسئلة معرفية (شرح)
-    const isQuestion = msg.startsWith('ايه') || msg.startsWith('ما هو') || 
-                       msg.includes('يعني') || msg.includes('رمز') ||
-                       msg.includes('اشرح') || msg.includes('شرح') ||
-                       msg.includes('ماذا') || msg.includes('كيف');
+    // 🔥 طلب معلومات عامة (موسع جداً)
+    const isInfoRequest = 
+        msg.includes('ايه') || 
+        msg.includes('ما هو') ||
+        msg.includes('يعني') ||
+        msg.includes('اشرح') ||
+        msg.includes('قولي') ||      // 🔥 مهم جداً
+        msg.includes('اذكر') ||      // 🔥
+        msg.includes('عدد') ||       // 🔥
+        msg.includes('عرف') ||
+        msg.includes('تعريف');
     
-    if (isQuestion) {
-        if (msg.includes('h2o') || msg.includes('ماء') || msg.includes('الماء')) {
-            return { subject: 'science', intent: 'explain', topic: 'h2o' };
-        }
-        if (msg.includes('كوكب') || msg.includes('الارض')) {
-            return { subject: 'science', intent: 'explain', topic: 'planet' };
-        }
-        if (msg.includes('جاذبية') || msg.includes('نيوتن')) {
-            return { subject: 'science', intent: 'explain', topic: 'gravity' };
-        }
+    if (isInfoRequest) {
         return { subject: session.subject || 'general', intent: 'explain' };
     }
     
-    // طلب مسألة/سؤال
+    // طلب مسألة/سؤال للتدريب
     if (msg.includes('مسألة') || msg.includes('سؤال') || 
         msg.includes('اديني') || msg.includes('هات') ||
         msg.includes('عايز سؤال') || msg.includes('تدريب')) {
@@ -84,10 +84,12 @@ function smartDetect(message, session) {
     }
     
     // تحديد المواد
-    if (msg.includes('علوم')) {
+    if (msg.includes('علوم') || msg.includes('كيمياء') || msg.includes('فيزياء')) {
+        session.subject = 'science';
         return { subject: 'science', intent: 'practice' };
     }
     if (msg.includes('رياضيات') || msg.includes('حساب')) {
+        session.subject = 'math';
         return { subject: 'math', intent: 'practice' };
     }
     
@@ -118,12 +120,19 @@ function smartDetect(message, session) {
         return { subject: session.subject || 'math', intent: 'answer' };
     }
     
+    // رد على سؤال "اه" أو "تمام" بعد الشرح
+    if ((msg === 'اه' || msg === 'تمام' || msg === 'ايوه' || msg === 'أيوة') && session.waitingForPractice) {
+        return { subject: session.subject, intent: 'practice' };
+    }
+    
     return null;
 }
 
-// 2. وظائف الشرح المخصصة
+// 2. وظائف الشرح المخصصة للمواضيع الأساسية
 async function getScienceExplanation(topic, message) {
-    if (topic === 'h2o' || message.toLowerCase().includes('h2o')) {
+    const msg = message.toLowerCase();
+    
+    if (topic === 'h2o' || msg.includes('h2o') || msg.includes('ماء')) {
         return `💧 **H2O ده رمز الماء!**
 
 الماء بيتكون من:
@@ -134,10 +143,10 @@ async function getScienceExplanation(topic, message) {
 
 الماء بيكوّن حوالي 71% من سطح الكوكب، وهو أساس الحياة على الأرض 🌍
 
-عايز تعرف حاجة تانية عن الماء؟`;
+🤔 تحب نجرب سؤال بسيط على كده؟`;
     }
     
-    if (topic === 'planet' || message.toLowerCase().includes('كوكب')) {
+    if (topic === 'planet' || msg.includes('كوكب')) {
         return `🌍 **الكواكب في المجموعة الشمسية:**
 
 1. عطارد (الأقرب للشمس)
@@ -149,51 +158,61 @@ async function getScienceExplanation(topic, message) {
 7. أورانوس
 8. نبتون
 
-عايز تعرف تفاصيل عن كوكب معين؟`;
+🤔 تحب نجرب سؤال بسيط على كده؟`;
     }
     
-    if (topic === 'gravity' || message.toLowerCase().includes('جاذبية')) {
+    if (topic === 'gravity' || msg.includes('جاذبية')) {
         return `🍎 **الجاذبية الأرضية**
 
 العالم إسحاق نيوتن هو اللي اكتشف الجاذبية لما شاف تفاحة بتقع من الشجرة.
 
-الجاذبية هي قوة بتجذب الأجسام نحو الأرض. يعني هي السبب إننا بنقف على الأرض وما بنطيرش في الهوا!`;
+الجاذبية هي قوة بتجذب الأجسام نحو الأرض. يعني هي السبب إننا بنقف على الأرض وما بنطيرش في الهوا!
+
+🤔 تحب نجرب سؤال بسيط على كده؟`;
     }
     
     return null;
 }
 
 async function getMathExplanation(operation, message) {
-    if (operation === 'addition' || message.toLowerCase().includes('جمع')) {
+    const msg = message.toLowerCase();
+    
+    if (operation === 'addition' || msg.includes('جمع')) {
         return `🧮 **الجمع** هو إنك بتضيف رقمين أو أكتر مع بعض.
 
 مثال: 3 تفاحات 🍎 + 2 تفاحات 🍎 = 5 تفاحات 🍎🍎🍎🍎🍎
 
-علامة الجمع هي (+)`;
+علامة الجمع هي (+)
+
+🤔 تحب نجرب مسألة جمع؟`;
     }
     
-    if (operation === 'subtraction' || message.toLowerCase().includes('طرح')) {
+    if (operation === 'subtraction' || msg.includes('طرح')) {
         return `🧮 **الطرح** هو إنك بتاخد رقم من رقم تاني.
 
 مثال: 5 تفاحات 🍎🍎🍎🍎🍎 - 2 تفاحات 🍎🍎 = 3 تفاحات 🍎🍎🍎
 
-علامة الطرح هي (-)`;
+علامة الطرح هي (-)
+
+🤔 تحب نجرب مسألة طرح؟`;
     }
     
-    if (operation === 'division' || message.toLowerCase().includes('قسمة')) {
+    if (operation === 'division' || msg.includes('قسمة')) {
         return `🧮 **القسمة** هي توزيع الأرقام بالتساوي.
 
 مثال: 6 تفاحات ÷ 3 أشخاص = كل شخص ياخد 2 تفاحة 🍎🍎
 
-علامة القسمة هي (÷)`;
+علامة القسمة هي (÷)
+
+🤔 تحب نجرب مسألة قسمة؟`;
     }
     
     return null;
 }
 
-// 3. توليد الأسئلة
+// 3. توليد الأسئلة (باستخدام progress لكل مادة)
 function generateMathQuestion(session) {
-    const level = Math.min(session.level, 10);
+    const level = Math.min(session.progress.math, 10);
     const max = level * 5;
     
     if (session.currentOperation === 'subtraction') {
@@ -220,29 +239,38 @@ function generateMathQuestion(session) {
     }
     
     session.mode = 'question';
+    session.waitingForPractice = false;
     session.failCount = 0;
     session.subject = 'math';
     return session.lastQuestion;
 }
 
-function generateScienceQuestion() {
+function generateScienceQuestion(session) {
+    const level = session.progress.science;
+    
     const questions = [
         "🌍 ايه هو الكوكب اللي بنعيش عليه؟ (الأرض - المريخ - الزهرة)",
         "💧 ايه هو رمز الماء؟ (H2O - CO2 - O2)",
         "🌞 ايه مصدر الضوء والحرارة الأساسي على الأرض؟ (القمر - الشمس - النجوم)",
         "🍎 مين اللي اكتشف الجاذبية الأرضية؟ (نيوتن - أينشتاين - جاليليو)"
     ];
-    return questions[Math.floor(Math.random() * questions.length)];
+    
+    const index = Math.min(level - 1, questions.length - 1);
+    session.lastQuestion = questions[index];
+    session.correctAnswer = null;
+    session.mode = 'question';
+    session.waitingForPractice = false;
+    return session.lastQuestion;
 }
 
 function generateQuestionByTopic(session) {
     if (session.subject === 'science') {
-        return generateScienceQuestion();
+        return generateScienceQuestion(session);
     }
     return generateMathQuestion(session);
 }
 
-// 4. معالجة الإجابات
+// 4. معالجة الإجابات مع نظام Streak
 function handleAnswer(userMessage, session) {
     const numbers = userMessage.match(/\d+/g);
     if (!numbers || session.subject !== 'math') return null;
@@ -251,16 +279,34 @@ function handleAnswer(userMessage, session) {
     
     if (session.mode === 'question' && session.correctAnswer !== null) {
         if (userAnswer === session.correctAnswer) {
-            session.level++;
+            // 🔥 زيادة مستوى المادة
+            if (session.subject === 'math') {
+                session.progress.math++;
+            } else {
+                session.progress.science++;
+            }
+            session.streak++;
             session.failCount = 0;
+            
             const newQuestion = generateMathQuestion(session);
-            return `🔥 أداء قوي يا بطل! ✅ إجابة صح!\n📈 مستواك بقى ${session.level}\n\n${getMotivationalMessage('math')}\n${newQuestion}`;
+            let streakMessage = "";
+            
+            // 🎮 Gamification
+            if (session.streak === 3) {
+                streakMessage = "\n\n🔥 3 إجابات صح ورا بعض! جامد!\n";
+            } else if (session.streak === 5) {
+                streakMessage = "\n\n🏆 أسطورة! 5 صح متتالية!\n";
+            }
+            
+            return `✅ إجابة صح! ${streakMessage}\n📈 مستواك في ${session.subject === 'math' ? 'الرياضيات' : 'العلوم'} بقى ${session.subject === 'math' ? session.progress.math : session.progress.science}\n\n${getMotivationalMessage(session.subject)}\n${newQuestion}`;
         } else {
             session.failCount++;
+            session.streak = 0;
+            
             if (session.failCount >= 2) {
                 session.failCount = 0;
                 const newQuestion = generateMathQuestion(session);
-                return `📝 الحل الصحيح: ${session.correctAnswer}\n\n${getMotivationalMessage('math')}\n${newQuestion}`;
+                return `📝 الحل الصحيح كان: ${session.correctAnswer}\n\n${getMotivationalMessage(session.subject)}\n${newQuestion}`;
             }
             return `قريب 👀 حاول تاني.\n\n${session.lastQuestion}`;
         }
@@ -268,14 +314,11 @@ function handleAnswer(userMessage, session) {
     return null;
 }
 
-// 5. AI للشرح باستخدام DeepSeek (ثابت)
+// 5. AI للشرح باستخدام موديلات متعددة
 async function chatWithAI(message, session) {
-    // تجربة الموديل الأساسي أولاً
-    const modelsToTry = [MODEL, FALLBACK_MODEL];
-    
-    for (const model of modelsToTry) {
+    for (const model of MODELS_TO_TRY) {
         try {
-            console.log(`🔄 Trying DeepSeek model: ${model}`);
+            console.log(`🔄 Trying model: ${model}`);
             
             const messages = [
                 { role: "system", content: TEACHER_SYSTEM_PROMPT },
@@ -288,50 +331,41 @@ async function chatWithAI(message, session) {
                     model: model,
                     messages: messages,
                     temperature: 0.7,
-                    max_tokens: 600,
-                    top_p: 0.9,
-                    frequency_penalty: 0.5,
-                    presence_penalty: 0.5
+                    max_tokens: 800
                 },
                 {
                     headers: {
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
                         'HTTP-Referer': 'https://school-gamma-ten.vercel.app',
-                        'X-Title': 'WhatsApp Teacher Bot - DeepSeek'
+                        'X-Title': 'WhatsApp Teacher Bot'
                     },
-                    timeout: 30000
+                    timeout: 25000
                 }
             );
             
             if (response.data?.choices?.[0]?.message?.content) {
-                console.log(`✅ Success with DeepSeek ${model}`);
-                return response.data.choices[0].message.content;
+                console.log(`✅ Success with ${model}`);
+                let aiReply = response.data.choices[0].message.content;
+                
+                // إضافة دعوة للتدريب بعد الشرح
+                aiReply += "\n\n🤔 تحب نجرب سؤال بسيط على كده؟";
+                session.waitingForPractice = true;
+                
+                return aiReply;
             }
             
         } catch (error) {
-            console.log(`❌ DeepSeek ${model} failed:`, error.message);
-            if (error.response) {
-                console.log(`   Status: ${error.response.status}`);
-                console.log(`   Data:`, JSON.stringify(error.response.data).slice(0, 200));
-            }
+            console.log(`❌ ${model} failed:`, error.message);
         }
     }
     
     return null;
 }
 
-function cleanResponse(text) {
-    if (!text || text.trim().length < 3) return null;
-    if (text.includes('```') || text.includes('function') || text.includes('const ')) {
-        return null;
-    }
-    return text.trim();
-}
-
 class UserSession {
     constructor() {
-        this.mode = 'learning';
+        this.mode = 'learning';        // learning, question
         this.conversationHistory = [];
         this.hasStarted = false;
         this.lastQuestion = null;
@@ -340,7 +374,16 @@ class UserSession {
         this.subject = 'math';
         this.intent = null;
         this.currentOperation = 'addition';
-        this.level = 1;
+        
+        // 🔥 تتبع التقدم لكل مادة على حدة
+        this.progress = {
+            math: 1,
+            science: 1
+        };
+        
+        // 🎮 نظام النقاط والتحديات
+        this.streak = 0;
+        this.waitingForPractice = false;
     }
 }
 
@@ -379,12 +422,12 @@ module.exports = async (req, res) => {
         return res.status(200).send(`
             <!DOCTYPE html>
             <html dir="rtl">
-            <head><title>بوت المدرس الصبور - DeepSeek V3</title></head>
+            <head><title>بوت المدرس الشامل - AI متعدد الموديلات</title></head>
             <body style="font-family: Arial; text-align: center; padding: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
-                <h1>👨‍🏫 بوت المدرس الصبور</h1>
-                <p>✅ شغال على DeepSeek V3 - موديل ثابت وقوي</p>
-                <p>🎯 يدعم: رياضيات، علوم، شرح، أسئلة</p>
-                <p>🤖 DeepSeek - الذكاء الاصطناعي الصيني المتطور</p>
+                <h1>👨‍🏫 بوت المدرس الشامل</h1>
+                <p>✅ شغال على DeepSeek + Gemini + GPT-4o-mini</p>
+                <p>🎯 يشرح أي مادة: رياضيات، علوم، كيمياء، فيزياء، عربي، إنجليزي</p>
+                <p>🚀 مع نظام تطور ومستويات ومكافآت</p>
             </body>
             </html>
         `);
@@ -423,17 +466,9 @@ module.exports = async (req, res) => {
                 session.currentOperation = detection.operation;
             }
             
-            // Smart Exit
-            if (prevSubject && detection.subject !== prevSubject && session.mode === 'question') {
-                session.mode = 'learning';
-                session.lastQuestion = null;
-                session.correctAnswer = null;
-                console.log(`🔓 Smart exit: ${prevSubject} → ${detection.subject}`);
-            }
-            
             console.log(`🎯 Subject: ${session.subject}, Intent: ${detection.intent}, Mode: ${session.mode}`);
             
-            // المعالجة
+            // المعالجة الرئيسية
             if (detection.intent === 'answer') {
                 reply = handleAnswer(textMessage, session);
                 if (!reply && session.lastQuestion) {
@@ -449,6 +484,7 @@ module.exports = async (req, res) => {
                 
                 if (explanation) {
                     reply = explanation;
+                    session.waitingForPractice = true;
                     session.mode = 'learning';
                 } else {
                     const aiReply = await chatWithAI(textMessage, session);
@@ -465,18 +501,30 @@ module.exports = async (req, res) => {
                 const question = generateQuestionByTopic(session);
                 reply = `${getMotivationalMessage(session.subject)}\n${question}`;
                 session.mode = 'question';
+                session.waitingForPractice = false;
             }
             
             else if (detection.intent === 'greeting') {
                 reply = detection.response || "😊 أهلاً بيك! قولي عايز تتعلم ايه؟";
+                session.waitingForPractice = false;
             }
             
             else {
-                reply = `👨‍🏫 قولي عايز تتعلم ايه؟\n\nمتاح: رياضيات - علوم\nأو اكتب "اديني سؤال" عشان نبدأ تدريب`;
+                // 🔥 تحسين كبير: بدل ما نرجع رسالة عامة، نكمل من آخر سياق
+                if (session.mode === 'question' && session.lastQuestion) {
+                    reply = `👀 كنا في السؤال ده:\n\n${session.lastQuestion}`;
+                } else if (session.waitingForPractice) {
+                    reply = `🤔 عايز تجرب سؤال على اللي شرحناه؟\n\n${generateQuestionByTopic(session)}`;
+                    session.mode = 'question';
+                    session.waitingForPractice = false;
+                } else {
+                    reply = "👨‍🏫 قولّي عايز شرح ايه وأنا هبدأ معاك 💪";
+                }
             }
             
             if (!reply) {
                 reply = `${getMotivationalMessage(session.subject)}\n${generateQuestionByTopic(session)}`;
+                session.mode = 'question';
             }
             
             await sendWAPilotMessage(chatId, reply);
