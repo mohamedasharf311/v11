@@ -7,16 +7,11 @@ const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 
-// 🔥 استخدام Llama 3.3 70B - أقوى موديل من Meta
-const MODEL = 'meta-llama/llama-3.3-70b-instruct';
+// 🔥 استخدام DeepSeek V3 - موديل ثابت وقوي
+const MODEL = 'deepseek/deepseek-chat-v3-0324';
 
-// الموديلات البديلة لو فشل الأساسي
-const FALLBACK_MODELS = [
-    'meta-llama/llama-3.2-3b-instruct',
-    'meta-llama/llama-3.1-8b-instruct',
-    'google/gemini-2.0-flash-001',
-    'qwen/qwen-2.5-7b-instruct'
-];
+// موديل احتياطي لو فشل الأساسي
+const FALLBACK_MODEL = 'deepseek/deepseek-r1';
 
 const TEACHER_SYSTEM_PROMPT = `أنت مدرس صبور لطلاب المرحلة الإعدادية.
 
@@ -273,12 +268,14 @@ function handleAnswer(userMessage, session) {
     return null;
 }
 
-// 5. AI للشرح (Llama 3.3 70B)
+// 5. AI للشرح باستخدام DeepSeek (ثابت)
 async function chatWithAI(message, session) {
     // تجربة الموديل الأساسي أولاً
-    for (const model of [MODEL, ...FALLBACK_MODELS]) {
+    const modelsToTry = [MODEL, FALLBACK_MODEL];
+    
+    for (const model of modelsToTry) {
         try {
-            console.log(`🔄 Trying model: ${model}`);
+            console.log(`🔄 Trying DeepSeek model: ${model}`);
             
             const messages = [
                 { role: "system", content: TEACHER_SYSTEM_PROMPT },
@@ -291,26 +288,33 @@ async function chatWithAI(message, session) {
                     model: model,
                     messages: messages,
                     temperature: 0.7,
-                    max_tokens: 600
+                    max_tokens: 600,
+                    top_p: 0.9,
+                    frequency_penalty: 0.5,
+                    presence_penalty: 0.5
                 },
                 {
                     headers: {
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
                         'HTTP-Referer': 'https://school-gamma-ten.vercel.app',
-                        'X-Title': 'WhatsApp Teacher Bot'
+                        'X-Title': 'WhatsApp Teacher Bot - DeepSeek'
                     },
-                    timeout: 20000
+                    timeout: 30000
                 }
             );
             
             if (response.data?.choices?.[0]?.message?.content) {
-                console.log(`✅ Success with ${model}`);
+                console.log(`✅ Success with DeepSeek ${model}`);
                 return response.data.choices[0].message.content;
             }
             
         } catch (error) {
-            console.log(`❌ ${model} failed:`, error.message);
+            console.log(`❌ DeepSeek ${model} failed:`, error.message);
+            if (error.response) {
+                console.log(`   Status: ${error.response.status}`);
+                console.log(`   Data:`, JSON.stringify(error.response.data).slice(0, 200));
+            }
         }
     }
     
@@ -375,11 +379,12 @@ module.exports = async (req, res) => {
         return res.status(200).send(`
             <!DOCTYPE html>
             <html dir="rtl">
-            <head><title>بوت المدرس الصبور - Llama 3.3 70B</title></head>
+            <head><title>بوت المدرس الصبور - DeepSeek V3</title></head>
             <body style="font-family: Arial; text-align: center; padding: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
                 <h1>👨‍🏫 بوت المدرس الصبور</h1>
-                <p>✅ شغال على Llama 3.3 70B - أقوى موديل من Meta</p>
+                <p>✅ شغال على DeepSeek V3 - موديل ثابت وقوي</p>
                 <p>🎯 يدعم: رياضيات، علوم، شرح، أسئلة</p>
+                <p>🤖 DeepSeek - الذكاء الاصطناعي الصيني المتطور</p>
             </body>
             </html>
         `);
@@ -447,7 +452,7 @@ module.exports = async (req, res) => {
                     session.mode = 'learning';
                 } else {
                     const aiReply = await chatWithAI(textMessage, session);
-                    if (aiReply) {
+                    if (aiReply && aiReply.trim().length > 10) {
                         reply = aiReply;
                         session.mode = 'learning';
                     } else {
