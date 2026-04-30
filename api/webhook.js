@@ -2,7 +2,7 @@
 const axios = require('axios');
 
 const INSTANCE_ID = "instance3880";
-const WAPILOT_TOKEN = "yzWzEjmxZpbifuOx6lWafYT3Ng69gaFpJGAdTsVc6N";
+const WAPILOT_TOKEN = "LVQSwwsO4HiwnZKkDSSFpVIS0HHuF1AtSfOAOCTl9k";
 const WAPILOT_API_URL = "https://api.wapilot.net/api/v2";
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
